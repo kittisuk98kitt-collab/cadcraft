@@ -1331,4 +1331,6 @@
 	Text color	Колір тексту
 	Click the ruler to add a tab stop, right-click to remove one	Натисніть на лінійку, щоб додати табуляцію; права кнопка видаляє її
 	Mouse wheel zoom speed	Швидкість масштабування коліщатком миші
-	Reverse mouse wheel zoom: turning the wheel forward zooms out	Обернене масштабування коліщатком: прокручування вперед зменшує масштаб
+	Mouse wheel zoom	Масштабування коліщатком миші
+	Normal: wheel forward zooms in	Звичайне: прокручування вперед збільшує
+	Reversed: wheel forward zooms out	Обернене: прокручування вперед зменшує

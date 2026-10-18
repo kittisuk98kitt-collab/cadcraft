@@ -462,6 +462,20 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
         }
         ui.end_row();
 
+        ui.label(crate::tl!("Mouse wheel zoom"));
+        let reverse = app.session.settings.zoomwheel;
+        let label = |r: bool| if r { crate::tl!("Reversed: wheel forward zooms out") } else { crate::tl!("Normal: wheel forward zooms in") };
+        let mut picked = reverse;
+        egui::ComboBox::from_id_salt("options_zoomwheel").selected_text(label(reverse)).show_ui(ui, |ui| {
+            for r in [false, true] {
+                ui.selectable_value(&mut picked, r, label(r));
+            }
+        });
+        if picked != reverse {
+            changes.insert("ZOOMWHEEL".into(), json!(i32::from(picked)));
+        }
+        ui.end_row();
+
         ui.label(crate::tl!("Mouse wheel zoom speed"));
         let mut factor = app.session.settings.zoomfactor;
         if ui.add(egui::Slider::new(&mut factor, 3..=100)).changed() {
@@ -470,11 +484,6 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
         ui.end_row();
     });
     hint(ui, crate::tl!("An array that would create more objects than this is refused."));
-    ui.add_space(6.0);
-    let mut reverse = app.session.settings.zoomwheel;
-    if ui.checkbox(&mut reverse, crate::tl!("Reverse mouse wheel zoom: turning the wheel forward zooms out")).changed() {
-        changes.insert("ZOOMWHEEL".into(), json!(i32::from(reverse)));
-    }
     ui.add_space(6.0);
     let mut timed = app.options.time_sensitive_right_click;
     if ui.checkbox(&mut timed, crate::tl!("Time-sensitive right-click: a quick click is Enter, holding opens the menu")).changed() {
