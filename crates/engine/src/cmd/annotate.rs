@@ -72,7 +72,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["mld"])
             .params("{points: [[arrow], ..., [landing]] ([location] with leaderType none), text?, leaderType?: straight|spline|none, block?: name, blockAttach?: center|insertion}")
             .interactive(|s| Ok(Box::new(MLeaderM::new(s)))),
-        CommandSpec::new("leader", "Leader", run_leader).alias(&["lead"]).params("{points: [[x,y]...], text?}"),
+        CommandSpec::new("leader", "Leader", run_leader)
+            .alias(&["lead", "le", "qleader"])
+            .params("{points: [[x,y]...], text?}")
+            .interactive(|_| Ok(Box::new(LeaderM::default()))),
         CommandSpec::new("dimstyle.update", "Update", run_update)
             .menu(&["Dimension", "Update"])
             .params("{handles?}")
@@ -471,6 +474,76 @@ fn run_mleader(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 
+/// LEADER typed: points until Enter (at least two), then the annotation text (Enter for none).
+#[derive(Default)]
+struct LeaderM {
+    pts: Vec<Vec2>,
+    asking_text: bool,
+}
+
+impl LeaderM {
+    fn finish(&self, s: &mut Session, text: Option<&str>) -> Result<Step> {
+        let pts: Vec<[f64; 2]> = self.pts.iter().map(|p| [p.x, p.y]).collect();
+        let mut params = json!({ "points": pts });
+        if let Some(t) = text.map(str::trim).filter(|t| !t.is_empty()) {
+            params["text"] = json!(t);
+        }
+        run_leader(s, &params)?;
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for LeaderM {
+    fn name(&self) -> &'static str {
+        "LEADER"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        if self.asking_text {
+            Prompt::new("Enter annotation text <none>", Accept::TEXT)
+        } else if self.pts.is_empty() {
+            Prompt::new("Specify leader start point", Accept::POINT)
+        } else {
+            Prompt::new("Specify next point", Accept::POINT).base_opt(self.pts.last().copied())
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.asking_text {
+            return match i {
+                Input::Text(t) => self.finish(s, Some(&t)),
+                Input::Keyword(t) => self.finish(s, Some(&t)),
+                Input::Enter => self.finish(s, None),
+                Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            };
+        }
+        match i {
+            Input::Point(p) => {
+                if self.pts.last().is_none_or(|l| !l.near(p, 1e-12)) {
+                    self.pts.push(p);
+                    s.last_point = p;
+                }
+                Ok(Step::Continue)
+            }
+            Input::Enter if self.pts.len() >= 2 => {
+                self.asking_text = true;
+                Ok(Step::Continue)
+            }
+            Input::Enter | Input::Cancel => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+        if self.asking_text {
+            return Vec::new();
+        }
+        let mut v: Vec<EntityKind> = self.pts.windows(2).map(|w| super::helpers::line(w[0], w[1])).collect();
+        if let Some(l) = self.pts.last() {
+            v.push(super::helpers::line(*l, c));
+        }
+        v
+    }
+}
+
 fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     let pts = points_param(p, "points").ok_or_else(|| bad("leader", "`points` is required"))?;
     if pts.len() < 2 {
@@ -485,7 +558,8 @@ fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     }))?;
     let mut out = vec![h.hex()];
     if let (Some(t), Some(last)) = (str_param(p, "text"), pts.last()) {
-        let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height).unwrap_or(0.18);
+        // The text height the style gives dimension text, times its overall scale (DIMSCALE).
+        let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height * if d.scale > 0.0 { d.scale } else { 1.0 }).unwrap_or(0.18);
         out.push(
             s.add_entity(EntityKind::MText(MText {
                 insert: v3(*last + Vec2::new(th * 0.5, th * 0.5)),
