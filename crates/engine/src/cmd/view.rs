@@ -568,12 +568,13 @@ impl Session {
         self.touch();
         Ok(())
     }
-    /// The zoom of a mouse wheel scroll by `delta` points (up zooms in): ZOOMFACTOR scales it
-    /// (60, the default, zooms about 18% per wheel step).
+    /// The zoom of a mouse wheel scroll by `delta` points (up zooms in, or out with ZOOMWHEEL 1):
+    /// ZOOMFACTOR scales it (60, the default, zooms about 18% per wheel step).
     pub fn wheel_zoom_factor(&self, delta: f64) -> f64 {
         if !delta.is_finite() {
             return 1.0;
         }
+        let delta = if self.settings.zoomwheel { -delta } else { delta };
         let k = f64::from(self.settings.zoomfactor.clamp(3, 100)) / 60.0;
         (delta / 300.0 * k).clamp(-40.0, 40.0).exp()
     }

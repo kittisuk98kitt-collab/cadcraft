@@ -355,6 +355,8 @@ pub struct Settings {
     pub gridmajor: u32,
     /// ZOOMFACTOR: how far one mouse wheel step zooms (3..=100).
     pub zoomfactor: u32,
+    /// ZOOMWHEEL: false (0) zooms in when the wheel turns forward, true (1) reverses that.
+    pub zoomwheel: bool,
     /// -VIEW sEttings > Layer snapshot: named views save the layer settings with them.
     pub view_layer_snapshot: bool,
     pub dynmode: bool,
@@ -460,6 +462,7 @@ impl Default for Settings {
             gridunit: Vec2::new(0.5, 0.5),
             gridmajor: 5,
             zoomfactor: 60,
+            zoomwheel: false,
             view_layer_snapshot: true,
             dynmode: true,
             dyndigrip: 31,

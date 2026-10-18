@@ -180,3 +180,22 @@ fn zoomfactor_scales_the_wheel() {
     assert!(close(s.wheel_zoom_factor(-50.0), 1.0 / at3));
     assert_eq!(s.wheel_zoom_factor(f64::INFINITY), 1.0);
 }
+
+#[test]
+fn zoomwheel_reverses_the_wheel() {
+    let mut s = session();
+    assert_eq!(s.execute("getvar", &json!({ "name": "ZOOMWHEEL" })).unwrap()["value"], json!(0));
+    let forward = s.wheel_zoom_factor(50.0);
+    assert!(forward > 1.0);
+    for bad in [json!(2), json!(-1), json!("x")] {
+        assert!(s.execute("setvar", &json!({ "name": "ZOOMWHEEL", "value": bad })).is_err());
+    }
+    s.execute("setvar", &json!({ "name": "ZOOMWHEEL", "value": 1 })).unwrap();
+    assert_eq!(s.execute("getvar", &json!({ "name": "ZOOMWHEEL" })).unwrap()["value"], json!(1));
+    assert!(close(s.wheel_zoom_factor(50.0), 1.0 / forward));
+    assert!(close(s.wheel_zoom_factor(-50.0), forward));
+    // A profile setting: OPTIONS saves and resets it with the others.
+    assert_eq!(cadcraft_engine::cmd::options::profile(&s)["ZOOMWHEEL"], json!(1));
+    s.execute("options", &json!({ "reset": true })).unwrap();
+    assert_eq!(s.execute("getvar", &json!({ "name": "ZOOMWHEEL" })).unwrap()["value"], json!(0));
+}

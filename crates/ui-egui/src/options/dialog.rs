@@ -461,8 +461,20 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
             changes.insert("MAXARRAY".into(), json!(max));
         }
         ui.end_row();
+
+        ui.label(crate::tl!("Mouse wheel zoom speed"));
+        let mut factor = app.session.settings.zoomfactor;
+        if ui.add(egui::Slider::new(&mut factor, 3..=100)).changed() {
+            changes.insert("ZOOMFACTOR".into(), json!(factor));
+        }
+        ui.end_row();
     });
     hint(ui, crate::tl!("An array that would create more objects than this is refused."));
+    ui.add_space(6.0);
+    let mut reverse = app.session.settings.zoomwheel;
+    if ui.checkbox(&mut reverse, crate::tl!("Reverse mouse wheel zoom: turning the wheel forward zooms out")).changed() {
+        changes.insert("ZOOMWHEEL".into(), json!(i32::from(reverse)));
+    }
     ui.add_space(6.0);
     let mut timed = app.options.time_sensitive_right_click;
     if ui.checkbox(&mut timed, crate::tl!("Time-sensitive right-click: a quick click is Enter, holding opens the menu")).changed() {

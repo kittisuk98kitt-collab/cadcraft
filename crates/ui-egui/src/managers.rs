@@ -28,6 +28,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
         "style" | "st" => "textstyle",
+        "dimstyle" | "dimstyle.dimension" | "d" | "dst" | "ddim" => "dimstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -49,6 +50,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "linetype" => linetype(app, ctx, open),
         "ptype" => point_style(app, ctx, open),
         "textstyle" => text_style(app, ctx, open),
+        "dimstyle" => dim_style(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
@@ -329,6 +331,48 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
     }
     let current = d.header.str("TEXTSTYLE", "Standard");
     style_manager(ctx, open, "Text Style", "style", &current, &styles)
+}
+
+/// The arrowheads offered in the Dimension Style dialog (DIMBLK names).
+const ARROWHEADS: &[&str] =
+    &["_CLOSEDFILLED", "_CLOSEDBLANK", "_CLOSED", "_DOT", "_DOTSMALL", "_OBLIQUE", "_ARCHTICK", "_OPEN", "_OPEN90", "_OPEN30", "_NONE"];
+
+fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
+    let Ok(d) = app.session.doc() else {
+        no_drawing(ctx, "Dimension Style", open);
+        return None;
+    };
+    let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    let arrows: Vec<String> = ARROWHEADS.iter().map(|a| (*a).to_string()).collect();
+    let mut styles: Vec<Style> = d
+        .dim_styles
+        .iter()
+        .map(|s| {
+            let arrow = if s.arrow_block.trim().is_empty() { "_CLOSEDFILLED".to_string() } else { s.arrow_block.to_ascii_uppercase() };
+            Style {
+                name: s.name.clone(),
+                fields: vec![
+                    Field::Num("DIMTXT", "Text height", s.text_height),
+                    Field::Choice("DIMTXSTY", "Text style", s.text_style.clone(), text_styles.clone()),
+                    Field::Num("DIMGAP", "Text offset from dim line", s.text_gap),
+                    Field::Bool("DIMTAD", "Text above the dimension line", s.text_above != 0),
+                    Field::Choice("DIMBLK", "Arrowheads", arrow, arrows.clone()),
+                    Field::Num("DIMASZ", "Arrow size", s.arrow_size),
+                    Field::Num("DIMEXE", "Extend beyond dim lines", s.ext_extend),
+                    Field::Num("DIMEXO", "Offset from origin", s.ext_offset),
+                    Field::Num("DIMDEC", "Decimal places", f64::from(s.decimals)),
+                    Field::Num("DIMLFAC", "Measurement scale factor", s.linear_factor),
+                    Field::Num("DIMSCALE", "Overall scale", s.scale),
+                ],
+            }
+        })
+        .collect();
+    if styles.is_empty() {
+        let s = cadcraft_doc::DimStyle::default();
+        styles.push(Style { name: s.name, fields: Vec::new() });
+    }
+    let current = d.header.str("DIMSTYLE", "Standard");
+    style_manager(ctx, open, "Dimension Style", "dimstyle", &current, &styles)
 }
 
 fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
