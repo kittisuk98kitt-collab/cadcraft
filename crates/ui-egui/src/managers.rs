@@ -300,6 +300,9 @@ enum Field {
     Num(&'static str, &'static str, f64),
     Bool(&'static str, &'static str, bool),
     Choice(&'static str, &'static str, String, Vec<String>),
+    /// A list whose entries each set several properties at once: (id, label, current entry,
+    /// [(entry, {property: value…})]).
+    Preset(&'static str, &'static str, String, Vec<(String, Value)>),
 }
 
 struct Style {
@@ -344,11 +347,34 @@ fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     };
     let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
     let arrows: Vec<String> = ARROWHEADS.iter().map(|a| (*a).to_string()).collect();
+    // The colours offered for dimension lines, extension lines and text (any other colour the
+    // style already has is added to its list).
+    let colors = |c: cadcraft_doc::color::Color| {
+        let mut list: Vec<String> =
+            ["ByBlock", "ByLayer", "Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "White", "Color 8", "Color 9", "Color 30"]
+                .iter()
+                .map(|n| (*n).to_string())
+                .collect();
+        if !list.contains(&c.name()) {
+            list.push(c.name());
+        }
+        list
+    };
+    let aligned = [
+        ("Horizontal".to_string(), json!({ "DIMTIH": 1, "DIMTOH": 1 })),
+        ("Aligned with dimension line".to_string(), json!({ "DIMTIH": 0, "DIMTOH": 0 })),
+        ("ISO standard".to_string(), json!({ "DIMTIH": 0, "DIMTOH": 1 })),
+    ];
     let mut styles: Vec<Style> = d
         .dim_styles
         .iter()
         .map(|s| {
             let arrow = if s.arrow_block.trim().is_empty() { "_CLOSEDFILLED".to_string() } else { s.arrow_block.to_ascii_uppercase() };
+            let alignment = match (s.text_inside_horizontal, s.text_outside_horizontal) {
+                (true, _) => "Horizontal",
+                (false, false) => "Aligned with dimension line",
+                (false, true) => "ISO standard",
+            };
             Style {
                 name: s.name.clone(),
                 fields: vec![
@@ -356,6 +382,10 @@ fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                     Field::Choice("DIMTXSTY", "Text style", s.text_style.clone(), text_styles.clone()),
                     Field::Num("DIMGAP", "Text offset from dim line", s.text_gap),
                     Field::Bool("DIMTAD", "Text above the dimension line", s.text_above != 0),
+                    Field::Preset("textAlignment", "Text alignment", alignment.to_string(), aligned.to_vec()),
+                    Field::Choice("DIMCLRT", "Text color", s.text_color.name(), colors(s.text_color)),
+                    Field::Choice("DIMCLRD", "Dimension line color", s.dim_line_color.name(), colors(s.dim_line_color)),
+                    Field::Choice("DIMCLRE", "Extension line color", s.ext_line_color.name(), colors(s.ext_line_color)),
                     Field::Choice("DIMBLK", "Arrowheads", arrow, arrows.clone()),
                     Field::Num("DIMASZ", "Arrow size", s.arrow_size),
                     Field::Num("DIMEXE", "Extend beyond dim lines", s.ext_extend),
@@ -493,6 +523,23 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                                 }
                             });
                             picked.map(|c| (*key, json!(c)))
+                        }
+                        Field::Preset(id, label, v, choices) => {
+                            ui.label(*label);
+                            egui::ComboBox::from_id_salt((cmd, *id)).selected_text(v.as_str()).show_ui(ui, |ui| {
+                                for (c, set) in choices {
+                                    if ui.selectable_label(c == v, c).clicked()
+                                        && c != v
+                                        && let Value::Object(fields) = set
+                                    {
+                                        let mut p = fields.clone();
+                                        p.insert("name".into(), json!(style.name));
+                                        p.insert("current".into(), json!(false));
+                                        action = Some((cmd, Value::Object(p)));
+                                    }
+                                }
+                            });
+                            None
                         }
                     };
                     if let Some((key, v)) = change {
