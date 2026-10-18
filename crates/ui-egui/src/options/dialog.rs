@@ -485,11 +485,28 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     });
     hint(ui, crate::tl!("An array that would create more objects than this is refused."));
     ui.add_space(6.0);
-    let mut timed = app.options.time_sensitive_right_click;
-    if ui.checkbox(&mut timed, crate::tl!("Time-sensitive right-click: a quick click is Enter, holding opens the menu")).changed() {
-        changes.insert("timeSensitiveRightClick".into(), json!(timed));
+    // Right-click on the drawing area: (time-sensitive, repeat with no command).
+    let modes = [
+        ((true, false), crate::tl!("Enter while a command runs, shortcut menu otherwise")),
+        ((true, true), crate::tl!("Always Enter (repeats the last command)")),
+        ((false, false), crate::tl!("Always the shortcut menu")),
+    ];
+    let current = (app.options.time_sensitive_right_click, app.options.time_sensitive_right_click && app.options.right_click_repeat);
+    let mut picked = current;
+    ui.horizontal(|ui| {
+        ui.label(crate::tl!("Right-click"));
+        let shown = modes.iter().find(|(m, _)| *m == current).map_or(modes[0].1, |(_, l)| *l);
+        egui::ComboBox::from_id_salt("options_right_click").selected_text(shown).show_ui(ui, |ui| {
+            for (m, label) in modes {
+                ui.selectable_value(&mut picked, m, label);
+            }
+        });
+    });
+    if picked != current {
+        changes.insert("timeSensitiveRightClick".into(), json!(picked.0));
+        changes.insert("rightClickRepeat".into(), json!(picked.1));
     }
-    hint(ui, crate::tl!("Turned off, a right-click while a command runs always opens the shortcut menu."));
+    hint(ui, crate::tl!("In the Enter modes, holding the right button opens the shortcut menu."));
 }
 
 fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {

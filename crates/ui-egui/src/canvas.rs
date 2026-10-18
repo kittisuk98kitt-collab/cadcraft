@@ -1576,7 +1576,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if inside && pressed_secondary {
         app.canvas.snap_menu = mods.shift || mods.ctrl;
     }
-    if crate::context_menu::in_command(app, ui, inside, pressed_secondary) {
+    // OPTIONS rightClickRepeat: with no command, a quick right-click is Enter (repeat the last
+    // command) unless it lands on a grip that has its own menu.
+    let idle_enter = idle
+        && app.options.right_click_repeat
+        && !grip_at(app, &xf, hover_pos).is_some_and(|g| !grip_options(app, g).is_empty());
+    if crate::context_menu::in_command(app, ui, inside, pressed_secondary, idle_enter) {
         let _ = app.session.input(Input::Enter);
     }
     // Right-click on a grip with options (polyline vertex, line end…) opens the grip menu.
@@ -1586,7 +1591,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     crate::dyngrips::menu(app, ui.ctx(), &xf);
     if idle && !app.canvas.snap_menu && app.canvas.grip_menu.is_some() {
         grip_menu(app, &resp);
-    } else if idle || app.canvas.snap_menu {
+    } else if (idle && !idle_enter) || app.canvas.snap_menu {
         crate::context_menu::show(app, &resp);
     }
 

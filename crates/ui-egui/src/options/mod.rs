@@ -66,6 +66,9 @@ pub struct UiOptions {
     /// While a command runs: a quick right-click is Enter and a held one opens the shortcut menu
     /// (AutoCAD's time-sensitive right-click). Off: a right-click always opens the menu.
     pub time_sensitive_right_click: bool,
+    /// With no command running, a quick right-click is Enter too (it repeats the last command);
+    /// a held one still opens the shortcut menu. Needs the time-sensitive right-click.
+    pub right_click_repeat: bool,
 }
 
 impl Default for UiOptions {
@@ -76,6 +79,7 @@ impl Default for UiOptions {
             snap_marker_size: theme::SNAP_MARKER,
             selection_color: None,
             time_sensitive_right_click: true,
+            right_click_repeat: false,
         }
     }
 }
@@ -141,6 +145,7 @@ struct UiChanges {
     savetime: Option<u32>,
     savefilepath: Option<String>,
     time_sensitive_right_click: Option<bool>,
+    right_click_repeat: Option<bool>,
 }
 
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
@@ -179,6 +184,7 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             c.save_version = Some(crate::SaveVersion::parse(name.trim()).ok_or("saveVersion must be 2000, 2004, 2007, 2010, 2013 or 2018")?);
         }
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
+        "rightClickRepeat" => c.right_click_repeat = Some(v.as_bool().ok_or("rightClickRepeat must be true or false")?),
         k if k.eq_ignore_ascii_case("SAVETIME") => {
             let max = cadcraft_engine::autosave::MAX_SAVETIME;
             let n = v
@@ -214,6 +220,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("SAVETIME".into(), json!(cadcraft_engine::autosave::savetime()));
     m.insert("SAVEFILEPATH".into(), json!(cadcraft_engine::autosave::savefilepath()));
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
+    m.insert("rightClickRepeat".into(), json!(o.right_click_repeat));
     m
 }
 
@@ -284,6 +291,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
+    if let Some(b) = ui.right_click_repeat {
+        app.options.right_click_repeat = b;
+    }
     Ok(report(app))
 }
 
@@ -314,6 +324,7 @@ impl CadApp {
             "selectionColor": color_json(self.options.selection_color),
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
+            "rightClickRepeat": self.options.right_click_repeat,
         })
         .to_string()
     }
@@ -329,7 +340,7 @@ impl CadApp {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
         }
         let mut c = UiChanges::default();
-        for key in ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick"] {
+        for key in ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick", "rightClickRepeat"] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
             }
@@ -352,6 +363,9 @@ impl CadApp {
         }
         if let Some(b) = c.time_sensitive_right_click {
             self.options.time_sensitive_right_click = b;
+        }
+        if let Some(b) = c.right_click_repeat {
+            self.options.right_click_repeat = b;
         }
     }
 }

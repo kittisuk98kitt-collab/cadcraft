@@ -311,7 +311,11 @@ struct Press(f64, egui::Pos2);
 /// the time-sensitive right-click turned off). Call it every frame
 /// with whether the pointer is on the canvas and whether a right-click ended there; it also shows
 /// the menu while it is open.
-pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: bool) -> bool {
+///
+/// With `idle_enter` (OPTIONS `rightClickRepeat`, and no command running) the same goes with no
+/// command: a quick click is Enter, which repeats the last command, and a held one opens the
+/// shortcut menu ([`entries`]).
+pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: bool, idle_enter: bool) -> bool {
     let ctx = ui.ctx().clone();
     let press_id = egui::Id::new("cc_command_menu_press");
     let popup_id = egui::Id::new("cc_command_menu");
@@ -325,15 +329,17 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
         ctx.data_mut(|d| d.insert_temp(press_id, Press(now, p)));
     }
     let running = app.session.prompting() && !app.canvas.snap_menu;
+    let idle = idle_enter && !app.session.prompting() && !app.canvas.snap_menu && app.options.time_sensitive_right_click;
+    let active = running || idle;
     let mut open = false;
     if released && let Some(Press(t0, p0)) = ctx.data_mut(|d| d.remove_temp::<Press>(press_id)) {
         // A drag isn't a click; a click held long enough asks for the menu.
         let still = pos.is_some_and(|p| p.distance(p0) <= 6.0);
         let held = now - t0 >= HOLD_SECS || !app.options.time_sensitive_right_click;
-        open = running && still && held;
+        open = active && still && held;
     }
-    let enter = running && inside && right_clicked && !open && app.options.time_sensitive_right_click;
-    if !running {
+    let enter = active && inside && right_clicked && !open && app.options.time_sensitive_right_click;
+    if !active {
         return false;
     }
     let mut clicked = None;
@@ -343,8 +349,12 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
         .style(egui::containers::menu::menu_style)
         .open_memory(open.then_some(egui::SetOpenCommand::Bool(true)));
     popup.show(|ui| {
-        if let Some(groups) = command_entries(app) {
-            groups_ui(ui, &groups, &mut clicked);
+        if running {
+            if let Some(groups) = command_entries(app) {
+                groups_ui(ui, &groups, &mut clicked);
+            }
+        } else {
+            groups_ui(ui, &entries(app), &mut clicked);
         }
     });
     if let Some(id) = clicked {

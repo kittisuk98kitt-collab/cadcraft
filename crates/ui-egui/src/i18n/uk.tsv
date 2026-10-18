@@ -1334,3 +1334,8 @@
 	Mouse wheel zoom	Масштабування коліщатком миші
 	Normal: wheel forward zooms in	Звичайне: прокручування вперед збільшує
 	Reversed: wheel forward zooms out	Обернене: прокручування вперед зменшує
+	Right-click	Правий клік
+	Enter while a command runs, shortcut menu otherwise	Enter під час команди, інакше контекстне меню
+	Always Enter (repeats the last command)	Завжди Enter (повторює останню команду)
+	Always the shortcut menu	Завжди контекстне меню
+	In the Enter modes, holding the right button opens the shortcut menu.	У режимах Enter утримання правої кнопки відкриває контекстне меню.
