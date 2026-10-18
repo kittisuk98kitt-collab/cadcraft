@@ -12,8 +12,17 @@ use web_sys::js_sys;
 
 /// The hidden file input (one at a time; a cancelled pick leaves it until the next one).
 const INPUT_ID: &str = "cadcraft_open_input";
-/// What the picker offers: the formats OPEN reads.
+/// What the picker offers: the formats OPEN reads. iPadOS and iOS grey out every file whose type
+/// they don't know (DWG and DXF among them) when `accept` lists extensions, so there the picker
+/// offers all files and OPEN reports one it can't read.
 const ACCEPT: &str = ".dxf,.dwg";
+
+/// Whether the browser runs on iPadOS or iOS (iPadOS Safari reports itself as a Mac with touch).
+fn apple_mobile() -> bool {
+    let Some(nav) = web_sys::window().map(|w| w.navigator()) else { return false };
+    let ua = nav.user_agent().unwrap_or_default();
+    ua.contains("iPhone") || ua.contains("iPad") || (ua.contains("Macintosh") && nav.max_touch_points() > 1)
+}
 
 /// A file read in the browser (name, contents), or why it couldn't be read.
 type Upload = Result<(String, Vec<u8>), String>;
@@ -50,7 +59,9 @@ impl Inbox {
             .dyn_into::<web_sys::HtmlInputElement>()
             .map_err(|_| "could not create a file input".to_string())?;
         input.set_type("file");
-        input.set_accept(ACCEPT);
+        if !apple_mobile() {
+            input.set_accept(ACCEPT);
+        }
         input.set_id(INPUT_ID);
         input.set_attribute("style", "display:none").map_err(js_error)?;
         let (inbox, chosen) = (self.clone(), input.clone());
