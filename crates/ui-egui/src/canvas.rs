@@ -1403,6 +1403,23 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         hatch_dialog = true;
     }
 
+    // Double-click a block reference (no command running) to edit its block in the Block Editor,
+    // as in AutoCAD. The click is used up like the hatch's.
+    if inside
+        && dbl_primary
+        && !hatch_dialog
+        && app.session.running.is_none()
+        && app.session.state().is_ok_and(|st| st.block_edit.is_none())
+        && let Some(hp) = hover_pos
+        && let Some(h) = insert_at(app, xf.to_world(hp), scale)
+    {
+        app.session.set_selection(Vec::new());
+        app.canvas.hot_grips.clear();
+        // Errors are echoed on the command line by `run`.
+        let _ = app.run("bedit", serde_json::json!({ "handle": h.hex() }));
+        hatch_dialog = true;
+    }
+
     // While a command asks for a point, every click places one, however fast the drafting (#815).
     // egui drops a click whose button comes up a few pixels from where it went down (a drag to it),
     // and eframe hands a slow frame's clicks over together, which egui reports as one.
@@ -1925,6 +1942,14 @@ fn tooltip(p: &egui::Painter, at: Pos2, text: &str) {
 
 /// The hatch under world point `w` within the pick aperture (PICKBOX × 1.5 pixels at `scale`
 /// pixels per unit), if any.
+/// The block reference under `w`, if the nearest object there is one.
+fn insert_at(app: &CadApp, w: Vec2, scale: f64) -> Option<Handle> {
+    let st = app.session.state().ok()?;
+    let aperture = app.session.settings.pickbox.max(1.0) * 1.5 / scale.max(1e-12);
+    let h = cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, aperture)?;
+    matches!(st.doc.entity(h)?.kind, cadcraft_doc::EntityKind::Insert(_)).then_some(h)
+}
+
 fn hatch_at(app: &CadApp, w: Vec2, scale: f64) -> Option<Handle> {
     let st = app.session.state().ok()?;
     let aperture = app.session.settings.pickbox.max(1.0) * 1.5 / scale.max(1e-12);
