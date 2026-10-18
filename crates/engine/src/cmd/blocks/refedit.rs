@@ -36,7 +36,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .menu(&["Tools", "Xref and Block In-place Editing", "Edit Reference In-Place"])
             .params("{handle? | handles? | name? (a block reference, default the selection), objects?: [block object handles] (default all)} → {block, insert, working: [handles], faded}")
             .enabled(has_doc)
-            .interactive(|_| Ok(Box::new(SelectRun::single("refedit", "REFEDIT", "Select reference")))),
+            .interactive(|_| Ok(Box::new(RefeditM(SelectRun::single("refedit", "REFEDIT", "Select reference"))))),
         CommandSpec::new("refset", "Working Set", run_refset)
             .menu(&["Tools", "Xref and Block In-place Editing", "Add to Working Set"])
             .params("{add?: [handles], remove?: [handles]} (or {handles, mode?: \"add\"|\"remove\"}); with neither: lists the working set → {working: [handles], added, removed}")
@@ -48,6 +48,32 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .enabled(editing)
             .interactive(|_| Ok(Box::new(RefcloseM))),
     ]
+}
+
+/// REFEDIT picking its reference. A pickfirst selection without a block reference in it (left
+/// over from earlier clicks) is dropped first, so the prompt asks for the reference instead of
+/// failing on that selection and then adding the pick to it.
+struct RefeditM(SelectRun);
+
+impl Interactive for RefeditM {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        self.0.prompt(s)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        self.0.input(s, i)
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let has_ref = s.doc().is_ok_and(|d| {
+            s.selection().iter().any(|h| d.entity(*h).is_some_and(|e| matches!(e.kind, cadcraft_doc::EntityKind::Insert(_))))
+        });
+        if !has_ref {
+            s.set_selection(Vec::new());
+        }
+        self.0.begin(s)
+    }
 }
 
 fn editing(s: &Session) -> std::result::Result<(), String> {
