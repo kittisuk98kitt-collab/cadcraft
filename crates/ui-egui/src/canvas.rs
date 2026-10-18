@@ -2025,7 +2025,10 @@ fn pickbox_half(pickbox: f64) -> Option<f32> {
 
 fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox: bool) {
     let st = Stroke::new(1.0, Tokens::get().crosshair);
-    let len = (rect.height() * app.session.settings.cursorsize as f32 / 100.0).max(12.0);
+    // CURSORSIZE is a percentage of the drawing area's height; 100 runs the lines across the whole
+    // drawing area both ways, as in AutoCAD (the painter clips them to it).
+    let size = app.session.settings.cursorsize as f32;
+    let len = if size >= 100.0 { rect.width().max(rect.height()) * 2.0 } else { (rect.height() * size / 100.0).max(12.0) };
     let pb = if pickbox { pickbox_half(app.session.settings.pickbox) } else { None };
     let gap = pb.unwrap_or(0.0);
     // Along the isometric plane's axes in isometric drafting.
