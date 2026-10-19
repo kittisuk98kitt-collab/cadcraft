@@ -90,7 +90,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 }
             });
             ui.separator();
-            ui.set_min_height(210.0);
+            ui.set_min_height(180.0);
             let st = &mut draft.st;
             match draft.tab {
                 0 => annotation_tab(ui, st, can_reuse),
@@ -226,7 +226,7 @@ fn attachment_tab(ui: &mut egui::Ui, st: &mut QLeaderSettings) {
         ui.group(|ui| {
             ui.label(crate::tl!("Multi-line Text Attachment"));
             ui.add_enabled_ui(!st.underline, |ui| {
-                egui::Grid::new("qleader_attach").num_columns(3).spacing(vec2(24.0, 6.0)).show(ui, |ui| {
+                egui::Grid::new("qleader_attach").num_columns(3).min_col_width(110.0).spacing(vec2(24.0, 6.0)).show(ui, |ui| {
                     ui.label(crate::tl!("Text on left side"));
                     ui.label("");
                     ui.label(crate::tl!("Text on right side"));
@@ -234,7 +234,7 @@ fn attachment_tab(ui: &mut egui::Ui, st: &mut QLeaderSettings) {
                     for (k, label) in ATTACH.iter().enumerate() {
                         let k = k as u8;
                         ui.vertical_centered(|ui| ui.radio_value(&mut st.attach_left, k, ""));
-                        ui.vertical_centered(|ui| ui.label(crate::i18n::t(label)));
+                        ui.vertical_centered(|ui| ui.add(egui::Label::new(crate::i18n::t(label)).extend()));
                         ui.vertical_centered(|ui| ui.radio_value(&mut st.attach_right, k, ""));
                         ui.end_row();
                     }

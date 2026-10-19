@@ -244,7 +244,7 @@ impl Interactive for QLeaderM {
             return t.prompt(s);
         }
         match self.stage {
-            Stage::First => Prompt::new("Specify first leader point, or", Accept::POINT).kw(&["Settings"]).default("Settings"),
+            Stage::First => Prompt::new("Specify first leader point", Accept::POINT).kw(&["Settings"]).default("Settings"),
             Stage::Points => Prompt::new("Specify next point", Accept::POINT).base_opt(self.pts.last().copied()),
             Stage::Width => Prompt::new("Specify text width", Accept { point: true, number: true, text: false, select: false, enter: true })
                 .default(format!("{}", self.width))

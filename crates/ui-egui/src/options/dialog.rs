@@ -25,7 +25,7 @@ pub(super) const TABS: [(&str, &str); 10] = [
     ("profiles", "Profiles"),
 ];
 
-const WIDTH: f32 = 680.0;
+const WIDTH: f32 = 760.0;
 const MIN_TAB_HEIGHT: f32 = 380.0;
 
 /// What a tab asks for besides OPTIONS changes: drawing variables (SETVAR), interface toggles
