@@ -2162,6 +2162,12 @@ fn text_of(k: &EntityKind) -> Option<String> {
         EntityKind::AttDef(a) => Some(a.text.value.clone()),
         EntityKind::MText(t) => Some(t.contents.replace("\\P", "\n")),
         EntityKind::Dimension(d) => Some(if d.text.is_empty() { "<>".into() } else { d.text.clone() }),
+        // A multileader's text, or a balloon's (block content): its first visible attribute.
+        EntityKind::MLeader(m) => match (&m.text, &m.block) {
+            (Some(t), _) => Some(t.contents.replace("\\P", "\n")),
+            (None, Some(b)) => b.attribs.iter().find(|a| !a.invisible && !a.constant).map(|a| a.text.value.clone()),
+            (None, None) => None,
+        },
         _ => None,
     }
 }
@@ -2178,6 +2184,15 @@ pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str) -> Result<()> {
         EntityKind::Dimension(d) => {
             d.text = if text == "<>" { String::new() } else { text.to_string() };
             d.block = None;
+        }
+        EntityKind::MLeader(m) => {
+            if let Some(t) = m.text.as_mut() {
+                t.contents = text.replace('\n', "\\P");
+            } else if let Some(a) = m.block.as_mut().and_then(|b| b.attribs.iter_mut().find(|a| !a.invisible && !a.constant)) {
+                a.text.value = text.to_string();
+            } else {
+                return Err(other("This multileader has no text or attribute to edit."));
+            }
         }
         _ => return Err(other("Select a text, mtext, attribute definition or dimension.")),
     }

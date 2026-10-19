@@ -199,3 +199,17 @@ fn zoomwheel_reverses_the_wheel() {
     s.execute("options", &json!({ "reset": true })).unwrap();
     assert_eq!(s.execute("getvar", &json!({ "name": "ZOOMWHEEL" })).unwrap()["value"], json!(0));
 }
+
+#[test]
+fn textedit_changes_multileader_text() {
+    let mut s = session();
+    let r = s.execute("mleader", &json!({ "points": [[0, 0], [5, 5]], "text": "A1" })).unwrap();
+    let h = r["handle"].as_str().or_else(|| r["handles"][0].as_str()).map(str::to_string).unwrap();
+    s.execute("textedit", &json!({ "handle": h, "text": "B2" })).unwrap();
+    let d = s.doc().unwrap();
+    let e = d.entity(cadcraft_engine::doc::Handle::parse_hex(&h).unwrap()).unwrap();
+    match &e.kind {
+        cadcraft_engine::doc::EntityKind::MLeader(m) => assert_eq!(m.text.as_ref().unwrap().contents, "B2"),
+        k => panic!("not a multileader: {}", k.type_name()),
+    }
+}
