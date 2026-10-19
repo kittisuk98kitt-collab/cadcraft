@@ -98,6 +98,7 @@ struct RefeditM {
 
 impl RefeditM {
     fn run(&self, s: &mut Session, h: Handle, depth: usize) -> Result<Step> {
+        s.refedit_levels.clear();
         let nested: Vec<String> = self.picked.as_ref().map(|(_, c)| c.iter().take(depth).map(|(h, _)| h.hex()).collect()).unwrap_or_default();
         let r = run_refedit(s, &json!({ "handle": h.hex(), "nested": nested }))?;
         if let Some(b) = r.get("block").and_then(Value::as_str) {
@@ -132,7 +133,10 @@ impl Interactive for RefeditM {
                 Input::Keyword(t) | Input::Text(t) => t.trim().parse::<usize>().ok().filter(|n| (1..=chain.len() + 1).contains(n)).ok_or_else(|| {
                     crate::EngineError::Other(format!("Enter a level from 1 to {}.", chain.len() + 1))
                 })?,
-                Input::Cancel => return Ok(Step::Done),
+                Input::Cancel => {
+                    s.refedit_levels.clear();
+                    return Ok(Step::Done);
+                }
                 _ => return Ok(Step::Continue),
             };
             return self.run(s, h, level - 1);
@@ -154,6 +158,7 @@ impl Interactive for RefeditM {
                 for (k, (_, name)) in chain.iter().enumerate() {
                     s.echo(format!("  {} = {}{}", k + 2, "  ".repeat(k + 1), name));
                 }
+                s.refedit_levels = std::iter::once(outer).chain(chain.iter().map(|(_, n)| n.clone())).collect();
                 self.picked = Some((h, chain));
                 Ok(Step::Continue)
             }

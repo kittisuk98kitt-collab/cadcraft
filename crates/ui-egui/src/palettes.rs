@@ -578,6 +578,126 @@ fn unavailable(ui: &mut egui::Ui, text: &str) {
 
 type Custom = Option<(String, Vec<cadcraft_engine::doc::dynblock::CustomProperty>)>;
 
+/// Arrowheads offered for a dimension's ends (DIMBLK1 / DIMBLK2).
+const DIM_ARROWS: &[&str] =
+    &["_CLOSEDFILLED", "_CLOSEDBLANK", "_CLOSED", "_DOT", "_DOTSMALL", "_OBLIQUE", "_ARCHTICK", "_OPEN", "_OPEN90", "_OPEN30", "_NONE"];
+
+/// Colours offered for dimension lines, extension lines and text.
+fn dim_colors(current: &str) -> Vec<String> {
+    let mut v: Vec<String> = ["ByBlock", "ByLayer", "Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "White", "Color 8", "Color 9", "Color 30"]
+        .iter()
+        .map(|c| (*c).to_string())
+        .collect();
+    if !v.iter().any(|c| c == current) {
+        v.push(current.to_string());
+    }
+    v
+}
+
+/// The Properties palette's Lines & Arrows, Text, Fit and Primary Units rows of one dimension,
+/// as AutoCAD lists them. Each shows the value in effect (its style with its own overrides);
+/// a change becomes an override on this dimension only (DIMOVERRIDE), never on the style.
+fn dimension_properties(
+    ui: &mut egui::Ui,
+    d: &cadcraft_engine::doc::Drawing,
+    dm: &cadcraft_engine::doc::Dimension,
+    ids: &Vec<String>,
+    group: &dyn Fn(&mut egui::Ui, &str),
+    out: &mut Option<Value>,
+    bad: &mut Option<String>,
+) {
+    let es = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+    let real = |v: f64| {
+        let s = format!("{v:.4}");
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
+    let mut put = |var: &str, v: Value| *out = Some(json!({ "handles": ids, var: v }));
+    let on_off = |b: bool| if b { "On" } else { "Off" }.to_string();
+    let arrow = |a: &str| if a.trim().is_empty() { "_CLOSEDFILLED".to_string() } else { a.to_ascii_uppercase() };
+    macro_rules! num_row {
+        ($label:expr, $var:expr, $v:expr) => {
+            prop_row(ui, $label, |ui| {
+                if let Some(f) = number(edit_field(ui, ui.id().with(($var, ids)), real($v)), bad) {
+                    put($var, json!(f));
+                }
+            });
+        };
+    }
+    macro_rules! menu_row {
+        ($label:expr, $var:expr, $cur:expr, $items:expr) => {
+            prop_row(ui, $label, |ui| {
+                let cur: String = $cur;
+                if let Some(v) = pick_menu(ui, &cur, $items).filter(|v| *v != cur) {
+                    put($var, json!(v));
+                }
+            });
+        };
+    }
+    let arrows = || DIM_ARROWS.iter().map(|a| (*a).to_string());
+    group(ui, "Lines & Arrows");
+    let a1 = if es.arrow_block1.trim().is_empty() { &es.arrow_block } else { &es.arrow_block1 };
+    let a2 = if es.arrow_block2.trim().is_empty() { &es.arrow_block } else { &es.arrow_block2 };
+    menu_row!("Arrow 1", "DIMBLK1", arrow(a1), arrows());
+    menu_row!("Arrow 2", "DIMBLK2", arrow(a2), arrows());
+    num_row!("Arrow size", "DIMASZ", es.arrow_size);
+    menu_row!("Dim line color", "DIMCLRD", es.dim_line_color.name(), dim_colors(&es.dim_line_color.name()));
+    num_row!("Dim line ext", "DIMDLE", es.dim_line_extend);
+    menu_row!("Ext line color", "DIMCLRE", es.ext_line_color.name(), dim_colors(&es.ext_line_color.name()));
+    num_row!("Ext line ext", "DIMEXE", es.ext_extend);
+    num_row!("Ext line offset", "DIMEXO", es.ext_offset);
+    group(ui, "Text");
+    menu_row!("Text color", "DIMCLRT", es.text_color.name(), dim_colors(&es.text_color.name()));
+    num_row!("Text height", "DIMTXT", es.text_height);
+    num_row!("Text offset", "DIMGAP", es.text_gap);
+    menu_row!("Text inside align", "DIMTIH", on_off(es.text_inside_horizontal), ["On".to_string(), "Off".to_string()]);
+    menu_row!("Text outside align", "DIMTOH", on_off(es.text_outside_horizontal), ["On".to_string(), "Off".to_string()]);
+    const VERT: [&str; 5] = ["Centered", "Above", "Outside", "JIS", "Below"];
+    prop_row(ui, "Text pos vert", |ui| {
+        let cur = VERT.get(usize::from(es.text_above)).copied().unwrap_or("Centered");
+        if let Some(v) = pick_menu(ui, cur, VERT.iter().map(|v| (*v).to_string()))
+            && let Some(k) = VERT.iter().position(|x| *x == v)
+            && v != cur
+        {
+            put("DIMTAD", json!(k));
+        }
+    });
+    menu_row!("Text style", "DIMTXSTY", es.text_style.clone(), d.text_styles.iter().map(|t| t.name.clone()));
+    group(ui, "Fit");
+    num_row!("Dim scale overall", "DIMSCALE", es.scale);
+    group(ui, "Primary Units");
+    menu_row!("Decimal separator", "DIMDSEP", if es.decimal_separator.is_empty() { ".".to_string() } else { es.decimal_separator.clone() }, [".", ",", " "].iter().map(|s| (*s).to_string()));
+    let (prefix, suffix) = es.post.split_once("<>").map_or((String::new(), es.post.clone()), |(a, b)| (a.to_string(), b.to_string()));
+    prop_row(ui, "Dim prefix", |ui| {
+        if let Some(v) = edit_field(ui, ui.id().with(("DIMPOST-pre", ids)), prefix.clone()) {
+            put("DIMPOST", json!(format!("{v}<>{suffix}")));
+        }
+    });
+    prop_row(ui, "Dim suffix", |ui| {
+        if let Some(v) = edit_field(ui, ui.id().with(("DIMPOST-suf", ids)), suffix.clone()) {
+            put("DIMPOST", json!(format!("{prefix}<>{v}")));
+        }
+    });
+    num_row!("Dim roundoff", "DIMRND", es.round);
+    num_row!("Dim scale linear", "DIMLFAC", es.linear_factor);
+    let zin = es.zero_suppression;
+    // DIMZIN bit 4 suppresses leading zeros, bit 8 trailing ones.
+    for (label, bit) in [("Suppress leading zeros", 4u8), ("Suppress trailing zeros", 8u8)] {
+        prop_row(ui, label, |ui| {
+            let cur = if zin & bit != 0 { "Yes" } else { "No" };
+            if let Some(v) = pick_menu(ui, cur, ["Yes".to_string(), "No".to_string()]).filter(|v| v != cur) {
+                put("DIMZIN", json!(if v == "Yes" { zin | bit } else { zin & !bit }));
+            }
+        });
+    }
+    let precision = |n: u8| if n == 0 { "0".to_string() } else { format!("0.{}", "0".repeat(usize::from(n))) };
+    prop_row(ui, "Precision", |ui| {
+        let cur = precision(es.decimals);
+        if let Some(v) = pick_menu(ui, &cur, (0..=8u8).map(precision)).filter(|v| *v != cur) {
+            put("DIMDEC", json!(v.len().saturating_sub(2)));
+        }
+    });
+}
+
 /// The dynamic block name and custom properties of block reference `h`, worked out once per
 /// drawing revision.
 fn custom_properties(ui: &egui::Ui, app: &CadApp, h: cadcraft_engine::doc::Handle) -> Custom {
@@ -837,6 +957,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids: Vec<String> = sel.iter().map(|h| h.hex()).collect();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
+    // A per-dimension DIM* variable change (DIMOVERRIDE), from the dimension rows below.
+    let mut dim_override: Option<Value> = None;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -1056,6 +1178,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         set = Some(json!({ "handles": ids, "dimStyle": n }));
                     }
                 });
+                dimension_properties(ui, d, dm, &ids, &group, &mut dim_override, &mut bad);
             }
             EntityKind::Insert(i) => {
                 // A dynamic block reference shows its dynamic block's name, not its anonymous
@@ -1096,5 +1219,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     report_bad(app, bad);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
+    }
+    if let Some(p) = dim_override {
+        let _ = app.run("dimstyle.override", p);
     }
 }

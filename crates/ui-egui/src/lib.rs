@@ -109,6 +109,9 @@ pub struct UiState {
     pub save_version: String,
     /// Drawings opened from a path, newest first (File ▸ Open Recent and the Start page).
     pub recent_files: Vec<String>,
+    /// Status bar items turned off in its customization menu (their command ids, or
+    /// "coordinates").
+    pub status_hidden: Vec<String>,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -180,6 +183,7 @@ impl Default for UiState {
             save_format: SaveFormat::default(),
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
+            status_hidden: Vec::new(),
         }
     }
 }
@@ -380,6 +384,9 @@ impl CadApp {
         if !self.ui.recent_files.is_empty() {
             prefs["recentFiles"] = json!(self.ui.recent_files);
         }
+        if !self.ui.status_hidden.is_empty() {
+            prefs["statusHidden"] = json!(self.ui.status_hidden);
+        }
         prefs.to_string()
     }
 
@@ -406,6 +413,9 @@ impl CadApp {
         }
         if let Some(files) = v.get("recentFiles").and_then(Value::as_array) {
             self.ui.recent_files = files.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).take(RECENT_FILES).map(str::to_string).collect();
+        }
+        if let Some(items) = v.get("statusHidden").and_then(Value::as_array) {
+            self.ui.status_hidden = items.iter().filter_map(Value::as_str).take(64).map(str::to_string).collect();
         }
     }
 

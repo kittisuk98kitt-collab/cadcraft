@@ -11,6 +11,7 @@ use crate::theme::Tokens;
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
+    reference_edit(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
     let mut open = true;
     match d.as_str() {
@@ -465,5 +466,72 @@ mod tests {
         super::insert_block(&mut app, "Nope");
         assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
         assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter block name".to_string()));
+    }
+}
+
+/// REFEDIT's Reference Edit dialog: when the pick lies on references nested in the picked one,
+/// the nesting as a tree (outermost first) to choose the reference to edit. OK answers the
+/// command's level prompt; the command line takes a typed level too.
+fn reference_edit(app: &mut CadApp, ctx: &egui::Context) {
+    let asking = app.session.running.as_ref().is_some_and(|r| r.id == "refedit") && !app.session.refedit_levels.is_empty();
+    let id = egui::Id::new("refedit_level");
+    if !asking {
+        ctx.data_mut(|d| d.remove::<usize>(id));
+        return;
+    }
+    let levels = app.session.refedit_levels.clone();
+    let mut sel = ctx.data_mut(|d| d.get_temp::<usize>(id)).unwrap_or(0).min(levels.len() - 1);
+    let t = Tokens::get();
+    let mut answer: Option<Option<usize>> = None;
+    let mut keep = true;
+    egui::Window::new(crate::tl!("Reference Edit"))
+        .id(egui::Id::new("Reference Edit"))
+        .open(&mut keep)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label(RichText::new(crate::tl!("Reference name:")).color(t.text_dim));
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_min_width(260.0);
+                for (k, name) in levels.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0 * k as f32);
+                        let r = ui.selectable_label(k == sel, name);
+                        if r.clicked() {
+                            sel = k;
+                        }
+                        if r.double_clicked() {
+                            answer = Some(Some(k));
+                        }
+                    });
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new(crate::tl!("The reference chosen is edited in place; the others stay faded.")).color(t.text_dim).small());
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(crate::tl!("Cancel")).clicked() {
+                    answer = Some(None);
+                }
+                if ui.button(crate::tl!("OK")).clicked() {
+                    answer = Some(Some(sel));
+                }
+            });
+        });
+    if !keep {
+        answer = Some(None);
+    }
+    ctx.data_mut(|d| d.insert_temp(id, sel));
+    match answer {
+        Some(Some(k)) => {
+            if let Err(e) = app.session.input(cadcraft_engine::Input::Keyword((k + 1).to_string())) {
+                app.session.echo(e.to_string());
+            }
+        }
+        Some(None) => {
+            app.session.cancel();
+            app.session.refedit_levels.clear();
+        }
+        None => {}
     }
 }

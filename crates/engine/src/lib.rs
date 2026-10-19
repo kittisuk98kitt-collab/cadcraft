@@ -653,6 +653,9 @@ pub struct Session {
     pub tracking: snap::tracking::Tracker,
     /// Viewport size in pixels (from the UI; used for zoom and pick apertures).
     pub viewport_px: (f64, f64),
+    /// REFEDIT asking which nesting level to edit: the block names under the pick, outermost
+    /// first (level 1). The UI shows them as the Reference Edit tree; empty otherwise.
+    pub refedit_levels: Vec<String>,
     pub clipboard: Vec<Entity>,
     pub clipboard_base: Vec2,
     pub pending_window: Option<PendingWindow>,
@@ -710,6 +713,7 @@ impl Session {
             compare: None,
             tracking: snap::tracking::Tracker::default(),
             viewport_px: (1200.0, 800.0),
+            refedit_levels: Vec::new(),
             clipboard: Vec::new(),
             clipboard_base: Vec2::ZERO,
             pending_window: None,

@@ -1339,3 +1339,37 @@
 	Always Enter (repeats the last command)	Завжди Enter (повторює останню команду)
 	Always the shortcut menu	Завжди контекстне меню
 	In the Enter modes, holding the right button opens the shortcut menu.	У режимах Enter утримання правої кнопки відкриває контекстне меню.
+	Enhanced Attribute Editor	Розширений редактор атрибутів
+	Block:	Блок:
+	Tag:	Тег:
+	Tag	Тег
+	Prompt	Підказка
+	Reference Edit	Редагування посилання
+	Reference name:	Назва посилання:
+	The reference chosen is edited in place; the others stay faded.	Вибране посилання редагується на місці; інші залишаються блідими.
+	Lines & Arrows	Лінії та стрілки
+	Arrow 1	Стрілка 1
+	Arrow 2	Стрілка 2
+	Arrow size	Розмір стрілки
+	Dim line color	Колір розмірної лінії
+	Dim line ext	Подовження розмірної лінії
+	Ext line color	Колір виносної лінії
+	Ext line ext	Подовження виносної лінії
+	Ext line offset	Відступ виносної лінії
+	Text offset	Відступ тексту
+	Text inside align	Вирівнювання тексту всередині
+	Text outside align	Вирівнювання тексту зовні
+	Text pos vert	Вертикальне положення тексту
+	Fit	Розміщення
+	Dim scale overall	Загальний масштаб
+	Primary Units	Основні одиниці
+	Decimal separator	Десятковий роздільник
+	Dim prefix	Префікс
+	Dim suffix	Суфікс
+	Dim roundoff	Округлення
+	Dim scale linear	Лінійний масштаб
+	Suppress leading zeros	Прибирати початкові нулі
+	Suppress trailing zeros	Прибирати кінцеві нулі
+	Precision	Точність
+	Customization	Налаштування
+	Coordinates	Координати

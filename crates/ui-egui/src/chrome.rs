@@ -345,8 +345,13 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             (Icon::Workspace, false, "ui.noop", "Workspace Switching"),
             (Icon::Gear, false, "ui.dialog.dsettings", "Drafting Settings"),
         ];
+        // The customization menu (the last button) lists every item to show or hide, as
+        // AutoCAD's does; hidden ones leave the bar.
+        let all_items: Vec<(&str, &str)> =
+            std::iter::once(("coordinates", "Coordinates")).chain(toggles.iter().map(|(_, _, cmd, tip)| (*cmd, *tip))).collect();
+        let toggles: Vec<_> = toggles.into_iter().filter(|(_, _, cmd, _)| !app.ui.status_hidden.iter().any(|h| h == cmd)).collect();
         let size = 20.0;
-        let mut rx = r.right() - 8.0 - toggles.len() as f32 * (size + 4.0);
+        let mut rx = r.right() - 8.0 - (toggles.len() + 1) as f32 * (size + 4.0);
         // Coordinates.
         let coord = app.canvas.cursor.map(|c| {
             let (lu, lp) = app.session.doc().map(|d| (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4))).unwrap_or((2, 4));
@@ -472,6 +477,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         // A transient message occupies the same bounded readout slot as coordinates.
         // Ellipsis and a tooltip keep either value readable without covering layout tabs.
         let message = app.status.as_ref().filter(|(_, at)| crate::now_ms() - at < 5000.0).map(|(message, _)| message);
+        let coord = coord.filter(|_| !app.ui.status_hidden.iter().any(|h| h == "coordinates"));
         let readout = message.cloned().or(coord);
         if let Some(text) = readout {
             let left = x + 8.0;
@@ -509,6 +515,27 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             rx += size + 4.0;
         }
+        // Customization: a menu of every status bar item with a check mark for those shown.
+        let br = Rect::from_min_size(pos2(rx, r.center().y - size / 2.0), vec2(size, size));
+        let resp = ui.interact(br, ui.id().with("status_customize"), Sense::click());
+        if resp.hovered() {
+            p.rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.5));
+        }
+        icons::paint(&p, br.shrink(2.5), Icon::Menu, false);
+        icons::describe_control(ui, &resp, "Customization", None, false);
+        let resp = resp.on_hover_text(crate::tl!("Customization"));
+        egui::Popup::from_toggle_button_response(&resp).width(230.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+            for (id, label) in &all_items {
+                let mut shown = !app.ui.status_hidden.iter().any(|h| h == id);
+                if ui.checkbox(&mut shown, crate::i18n::t(label)).changed() {
+                    if shown {
+                        app.ui.status_hidden.retain(|h| h != id);
+                    } else {
+                        app.ui.status_hidden.push((*id).to_string());
+                    }
+                }
+            }
+        });
         if let Some(c) = toggle_cmd {
             app.start(c);
         }
