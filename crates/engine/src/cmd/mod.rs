@@ -39,6 +39,7 @@ mod qselect;
 mod selecttools;
 mod settings;
 mod spline_opts;
+pub mod spring;
 mod table;
 mod tolerance;
 mod trimextend;
@@ -183,6 +184,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(annotate::specs());
         v.extend(qleader::specs());
         v.extend(actions::specs());
+        v.extend(spring::specs());
         v.extend(express::specs());
         v.extend(mleader_edit::specs());
         v.extend(annoscale::specs());

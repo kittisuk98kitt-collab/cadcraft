@@ -747,6 +747,8 @@ pub struct Session {
     /// The Action Recorder: the steps recorded since ACTRECORD (`None`: not recording) and the
     /// saved action macros by name.
     pub recording: Option<Vec<ActStep>>,
+    /// The last SPRING's sizes (the defaults of the next).
+    pub last_spring: Option<cmd::spring::Spec>,
     pub actions: std::collections::BTreeMap<String, Vec<ActStep>>,
     pub clipboard: Vec<Entity>,
     pub clipboard_base: Vec2,
@@ -810,6 +812,7 @@ impl Session {
             qleader_dialog: false,
             qleader_reuse: None,
             recording: None,
+            last_spring: None,
             actions: std::collections::BTreeMap::new(),
             clipboard: Vec::new(),
             clipboard_base: Vec2::ZERO,

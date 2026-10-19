@@ -130,3 +130,27 @@ fn blockreplace_txt2mtxt_and_laytrans() {
     let d = s.doc().unwrap();
     assert!(d.layer("OLD").is_none() && d.layer("NEW").is_some());
 }
+
+#[test]
+fn spring_draws_a_block_and_reports_its_rate() {
+    for view in ["full", "section", "simplified"] {
+        let mut s = Session::new();
+        let r = s.execute("spring", &json!({ "at": [0, 0], "wire": 2, "od": 20, "length": 50, "coils": 6, "view": view })).unwrap();
+        // k = G d^4 / (8 D^3 n) = 79300 * 16 / (8 * 5832 * 6)
+        assert!((r["rate"].as_f64().unwrap() - 79_300.0 * 16.0 / (8.0 * 5832.0 * 6.0)).abs() < 1e-9);
+        let name = r["block"].as_str().unwrap().to_string();
+        let d = s.doc().unwrap();
+        assert!(d.block(&name).is_some_and(|b| b.entities.len() > 3), "{view}");
+        assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == name)));
+    }
+    let mut s = Session::new();
+    assert!(s.execute("spring", &json!({ "at": [0, 0], "wire": 5, "od": 20, "length": 20, "coils": 6 })).is_err(), "solid");
+}
+
+#[test]
+fn spring_typed() {
+    let mut s = Session::new();
+    typed(&mut s, &["spring", "0,0", "60,0", "25", "2.5", "7", "C", "S"]);
+    assert!(s.running.is_none());
+    assert!(s.doc().unwrap().blocks.keys().any(|k| k.starts_with("SPRING_2_5x25x60")));
+}
