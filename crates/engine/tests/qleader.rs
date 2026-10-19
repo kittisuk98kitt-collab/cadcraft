@@ -234,3 +234,47 @@ fn stretch_box_selection_stretches() {
     let EntityKind::Line(l) = &k[0] else { panic!("line") };
     assert!((l.a.x - 0.0).abs() < 1e-9 && (l.b.x - 15.0).abs() < 1e-9, "{:?} {:?}", l.a, l.b);
 }
+
+#[test]
+fn pipe_runs_fittings_tees_and_edit() {
+    let mut s = Session::new();
+    s.viewport_px = (1200.0, 800.0);
+    let r =
+        s.execute("pipe", &json!({ "points": [[0, 0], [1000, 0], [1000, 800]], "size": "50A", "schedule": "SCH40", "flangeStart": true })).unwrap();
+    let run = r["run"].as_str().unwrap().to_string();
+    // The elbow's arcs: inside, outside and centre line.
+    assert_eq!(kinds(&s).iter().filter(|k| matches!(k, EntityKind::Arc(_))).count(), 3);
+    s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+    // A branch starting on the run puts a tee on it.
+    let b = s.execute("pipe", &json!({ "points": [[500, 0], [500, -600]] })).unwrap();
+    assert_eq!(b["fromTee"], true);
+    let first = s.doc().unwrap().groups.iter().find(|g| g.name == run).unwrap().members[0];
+    let info = s.execute("pipe.run", &json!({ "handle": first.hex() })).unwrap();
+    assert_eq!(info["tees"].as_array().unwrap().len(), 1);
+    // PIPEEDIT redraws the run at another size.
+    s.execute("pipeedit", &json!({ "handle": first.hex(), "size": "80A" })).unwrap();
+    let first = s.doc().unwrap().groups.iter().find(|g| g.name == run).unwrap().members[0];
+    let info = s.execute("pipe.run", &json!({ "handle": first.hex() })).unwrap();
+    assert_eq!(info["size"], "80A");
+    assert!(s.execute("pipe", &json!({ "points": [[0, 0], [10, 0], [10, 10]], "size": "100A" })).is_err(), "too short for its elbow");
+    assert!(s.execute("pipe", &json!({ "points": [[0, 0], [10, 0]], "size": "13A" })).is_err());
+}
+
+#[test]
+fn steel_members_from_jis_tables() {
+    let mut s = Session::new();
+    for (kind, size) in [("C", "150x75x6.5x10"), ("L", "50x50x6"), ("H", "200x200x8x12"), ("TUBE", "100x50x3.2"), ("FB", "50x6")] {
+        let r = s.execute("steel", &json!({ "points": [[0, 0]], "kind": kind, "size": size })).unwrap();
+        assert!(r["area"].as_f64().unwrap() > 0.0, "{kind}");
+    }
+    let r = s.execute("steel", &json!({ "points": [[0, -300], [800, -300]], "kind": "C", "size": "150x75x6.5x10", "view": "side" })).unwrap();
+    let h = r["handles"][0].as_str().unwrap().to_string();
+    let info = s.execute("steel.member", &json!({ "handle": h })).unwrap();
+    assert!((info["length"].as_f64().unwrap() - 800.0).abs() < 1e-9);
+    s.execute("steeledit", &json!({ "handle": h, "size": "200x80x7.5x11" })).unwrap();
+    let info = s.execute("steel.member", &json!({ "handle": h })).unwrap();
+    assert_eq!(info["size"], "200x80x7.5x11");
+    assert!(s.execute("steel", &json!({ "points": [[0, 0]], "kind": "C", "size": "151x75x6.5x10" })).is_err());
+    let st = s.execute("steel.settings", &json!({ "kind": "L" })).unwrap();
+    assert!(st["sizes"].as_array().unwrap().len() > 30);
+}

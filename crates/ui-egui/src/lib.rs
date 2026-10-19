@@ -24,6 +24,7 @@ pub mod docking;
 pub mod eattedit;
 pub mod hatchdlg;
 pub mod holedlg;
+pub mod mechdlg;
 mod mtext_editor;
 pub mod qleaderdlg;
 pub mod spacemouse;
@@ -392,6 +393,12 @@ impl CadApp {
         if !self.session.actions.is_empty() {
             prefs["actions"] = json!(self.session.actions);
         }
+        if self.session.pipe != cadcraft_engine::cmd::pipe::PipeSettings::default() {
+            prefs["pipe"] = json!(self.session.pipe);
+        }
+        if self.session.steel != cadcraft_engine::cmd::steel::SteelSettings::default() {
+            prefs["steel"] = json!(self.session.steel);
+        }
         if self.session.hole != cadcraft_engine::HoleSettings::default() {
             prefs["hole"] = json!(self.session.hole);
         }
@@ -439,6 +446,11 @@ impl CadApp {
                     (k, v)
                 })
                 .collect();
+        }
+        for (key, cmd) in [("pipe", "pipe.settings"), ("steel", "steel.settings")] {
+            if let Some(p) = v.get(key).filter(|p| p.is_object()) {
+                let _ = self.session.execute(cmd, p);
+            }
         }
         if let Some(h) = v.get("hole").and_then(|h| serde_json::from_value::<cadcraft_engine::HoleSettings>(h.clone()).ok()) {
             // Checked by the engine like any other change; a bad saved value keeps the default.

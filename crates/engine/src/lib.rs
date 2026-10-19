@@ -797,6 +797,15 @@ pub struct Session {
     /// The last window drawn with no command running and what it selected (STRETCH with a
     /// pickfirst selection stretches inside it).
     pub last_idle_window: Option<(Bounds2, Vec<Handle>)>,
+    /// PIPE's settings; `pipe_dialog` asks the UI for the Pipe dialog, `pipe_edit` for it on a
+    /// run (PIPEEDIT).
+    pub pipe: cmd::pipe::PipeSettings,
+    pub pipe_dialog: bool,
+    pub pipe_edit: Option<Handle>,
+    /// STEEL's settings; `steel_dialog` and `steel_edit` as for PIPE.
+    pub steel: cmd::steel::SteelSettings,
+    pub steel_dialog: bool,
+    pub steel_edit: Option<Handle>,
     pub actions: std::collections::BTreeMap<String, Vec<ActStep>>,
     pub clipboard: Vec<Entity>,
     pub clipboard_base: Vec2,
@@ -864,6 +873,12 @@ impl Session {
             hole: HoleSettings::default(),
             hole_dialog: false,
             last_idle_window: None,
+            pipe: cmd::pipe::PipeSettings::default(),
+            pipe_dialog: false,
+            pipe_edit: None,
+            steel: cmd::steel::SteelSettings::default(),
+            steel_dialog: false,
+            steel_edit: None,
             actions: std::collections::BTreeMap::new(),
             clipboard: Vec::new(),
             clipboard_base: Vec2::ZERO,

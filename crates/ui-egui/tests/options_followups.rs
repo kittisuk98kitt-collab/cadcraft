@@ -83,15 +83,18 @@ fn autosave_save_version_and_right_click_in_options() {
 
     // The tabs show the settings.
     let ctx = egui::Context::default();
-    a.ui.dialog = Some("options:files".into());
+    a.ui.dialog = Some("options:opensave".into());
     frame(&mut a, &ctx, Vec::new(), 0.0);
     let text = frame(&mut a, &ctx, Vec::new(), 0.1);
-    for l in ["Default save version", "2010", "Automatic save every", "\n25\n", "Automatic save file location"] {
+    for l in ["Save as:", "2010", "Automatic save", "\n25\n", "Minutes between saves"] {
         assert!(text.contains(l), "{l} missing:\n{text}");
     }
+    a.ui.dialog = Some("options:files".into());
+    frame(&mut a, &ctx, Vec::new(), 0.15);
+    assert!(frame(&mut a, &ctx, Vec::new(), 0.16).contains("Automatic Save File Location"));
     a.ui.dialog = Some("options:preferences".into());
     frame(&mut a, &ctx, Vec::new(), 0.2);
-    assert!(frame(&mut a, &ctx, Vec::new(), 0.3).contains("Time-sensitive right-click"));
+    assert!(frame(&mut a, &ctx, Vec::new(), 0.3).contains("Right-click Customization..."));
 
     // Turned off, a quick right-click during a command opens the menu instead of acting as Enter.
     a.ui.dialog = None;

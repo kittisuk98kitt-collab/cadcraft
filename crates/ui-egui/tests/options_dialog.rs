@@ -171,10 +171,14 @@ fn every_tab_renders() {
     let ctx = egui::Context::default();
     for (tab, label) in [
         ("display", "Crosshair size"),
-        ("files", "Save new drawings as"),
-        ("drafting", "Object snap aperture"),
+        ("files", "Automatic Save File Location"),
+        ("opensave", "Save as:"),
+        ("plot", "Plot Style Table Settings..."),
+        ("system", "Interface language"),
+        ("drafting", "Aperture Size"),
+        ("modeling", "Display the ViewCube"),
         ("selection", "Pickbox size"),
-        ("preferences", "Interface language"),
+        ("preferences", "Double click editing"),
         ("profiles", "Reset to Defaults"),
     ] {
         a.ui.dialog = Some(format!("options:{tab}"));

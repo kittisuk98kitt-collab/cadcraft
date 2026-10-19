@@ -132,7 +132,7 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
         // Tabs.
         let tab_h = 28.0;
         let mut x = r.left();
-        let tabs = ["Drafting", "Modeling", "Hole"];
+        let tabs = ["Drafting", "Modeling", "Mech"];
         let w = ((r.width() - 28.0) / tabs.len() as f32).clamp(56.0, 92.0);
         for name in tabs {
             let tr = Rect::from_min_size(pos2(x, r.top()), vec2(w, tab_h));
@@ -170,7 +170,7 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                 let groups: &[(&str, &[Tool], &[Tool])] = match app.ui.toolset_tab.as_str() {
                     "Drafting" => DRAFTING,
-                    "Hole" => HOLE,
+                    "Mech" => MECH,
                     _ => MODELING,
                 };
                 for (name, large, small) in groups {
@@ -279,10 +279,10 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
-/// The Hole tab: tapped holes to JIS, drilled holes and springs.
-pub const HOLE: &[(&str, &[Tool], &[Tool])] = &[
+/// The Mech tab: tapped holes to JIS, pipes with their fittings, structural steel, springs.
+pub const MECH: &[(&str, &[Tool], &[Tool])] = &[
     (
-        "Tapped Hole",
+        "Hole",
         &[
             (Icon::Circle, "taphole.m", "Tapped Hole M"),
             (Icon::Circle, "taphole.mf", "Tapped Hole M Fine"),
@@ -291,6 +291,8 @@ pub const HOLE: &[(&str, &[Tool], &[Tool])] = &[
         ],
         &[(Icon::Circle, "taphole.drill", "Drilled Hole"), (Icon::Gear, "taphole", "Hole Settings")],
     ),
+    ("Pipe", &[(Icon::Polyline, "pipe", "Pipe"), (Icon::Gear, "pipeedit", "Edit Pipe")], &[]),
+    ("Steel", &[(Icon::Rectangle, "steel", "Structural Member"), (Icon::Gear, "steeledit", "Edit Structural Member")], &[]),
     ("Spring", &[(Icon::Spline, "spring", "Compression Spring")], &[]),
 ];
 

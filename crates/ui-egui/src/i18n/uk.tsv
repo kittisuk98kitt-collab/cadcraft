@@ -1508,3 +1508,62 @@
 	Tapped Hole M	Різьбовий отвір M
 	Tapped Hole M Fine	Різьбовий отвір M дрібний
 	Tapped Hole PT	Різьбовий отвір PT
+# Pipe, structural members, holes.
+	0 = from the JIS table	0 = з таблиці JIS
+	Angle (JIS G3192)	Кутник (JIS G3192)
+	Bottom centre	Знизу по центру
+	Bottom edge	Нижній край
+	Centre	Центр
+	Centre line	Осьова лінія
+	Channel (JIS G3192)	Швелер (JIS G3192)
+	Depth	Глибина
+	Drill depth	Глибина свердління
+	Drilled hole	Свердлений отвір
+	Edit Pipe	Редагувати трубу
+	Edit Structural Member	Редагувати профіль
+	Elbows and tees are fitted where the run bends and branches.	Відводи й трійники ставляться там, де траса згинається і розгалужується.
+	Flange at end (JIS 10K)	Фланець у кінці (JIS 10K)
+	Flange at start (JIS 10K)	Фланець на початку (JIS 10K)
+	Flat bar	Штаба
+	H section (JIS G3192)	Двотавр H (JIS G3192)
+	Hatch the section	Заштрихувати переріз
+	Hole	Отвір
+	Insertion point	Точка вставлення
+	Major	Зовнішній
+	Metric coarse M (JIS B 0205)	Метрична M (JIS B 0205)
+	Metric fine M (JIS B 0205)	Метрична дрібна M (JIS B 0205)
+	Middle left	Посередині ліворуч
+	Middle right	Посередині праворуч
+	Parallel pipe G (JIS B 0202)	Трубна циліндрична G (JIS B 0202)
+	Pipe	Труба
+	Pitch	Крок
+	Place the size note	Підпис розміру
+	Profile	Профіль
+	SCH40 (JIS G3454)	SCH40 (за JIS G3454)
+	SCH60 (JIS G3454)	SCH60 (за JIS G3454)
+	SGP (JIS G3452)	SGP (за JIS G3452)
+	Section	Переріз
+	Side	Збоку
+	Side (section)	Збоку (переріз)
+	Size	Розмір
+	Size label	Підпис розміру
+	Square / rectangular tube (JIS G3466)	Квадратна / прямокутна труба (JIS G3466)
+	Structural Member	Профіль
+	Tap drill	Свердло під різьбу
+	Taper pipe Rc / PT (JIS B 0203)	Трубна конічна Rc / PT (JIS B 0203)
+	Thread	Різьба
+	Thread depth	Глибина різьби
+	Through	Наскрізний
+	Top	Зверху
+	Top centre	Зверху по центру
+	Top edge	Верхній край
+	Width x thickness	Ширина x товщина
+	Pipe Run	Траса труби
+	Pipe Settings	Параметри труби
+	Pipe...	Труба...
+	Structural Member Info	Відомості про профіль
+	Structural Member Settings	Параметри профілю
+	Structural Member...	Профіль...
+	Mech	Механіка
+	Steel	Сталь
+	Spring	Пружина

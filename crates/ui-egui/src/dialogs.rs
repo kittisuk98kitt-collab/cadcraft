@@ -14,6 +14,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     reference_edit(app, ctx);
     crate::qleaderdlg::show(app, ctx);
     crate::holedlg::show(app, ctx);
+    crate::mechdlg::show(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
     let mut open = true;
     match d.as_str() {
