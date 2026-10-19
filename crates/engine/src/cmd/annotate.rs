@@ -545,11 +545,24 @@ impl Interactive for LeaderM {
 }
 
 fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
-    let pts = points_param(p, "points").ok_or_else(|| bad("leader", "`points` is required"))?;
+    let mut pts = points_param(p, "points").ok_or_else(|| bad("leader", "`points` is required"))?;
     if pts.len() < 2 {
         return Err(bad("leader", "need 2+ points"));
     }
     let st = style(s);
+    // Everything the current dimension style gives a leader: arrow size, text height and gap
+    // (times DIMSCALE), text style and colour.
+    let ds = s.doc()?.dim_style(&st).cloned().unwrap_or_default();
+    let k = if ds.scale > 0.0 { ds.scale } else { 1.0 };
+    let text = str_param(p, "text").map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+    // With text, a sloped last segment gets a horizontal landing (one arrow size long), as
+    // QLEADER draws it; the text sits after it.
+    let n = pts.len();
+    let dir = if pts[n - 1].x >= pts[n - 2].x { 1.0 } else { -1.0 };
+    if text.is_some() && (pts[n - 1].y - pts[n - 2].y).abs() > 1e-9 {
+        let end = pts[n - 1] + Vec2::new(dir * ds.arrow_size * k, 0.0);
+        pts.push(end);
+    }
     let h = s.add_entity(EntityKind::Leader(cadcraft_doc::Leader {
         vertices: pts.iter().map(|q| v3(*q)).collect(),
         arrow: true,
@@ -557,24 +570,28 @@ fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
         style: st,
     }))?;
     let mut out = vec![h.hex()];
-    if let (Some(t), Some(last)) = (str_param(p, "text"), pts.last()) {
-        // The text height the style gives dimension text, times its overall scale (DIMSCALE).
-        let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height * if d.scale > 0.0 { d.scale } else { 1.0 }).unwrap_or(0.18);
-        out.push(
-            s.add_entity(EntityKind::MText(MText {
-                insert: v3(*last + Vec2::new(th * 0.5, th * 0.5)),
-                height: th,
-                width: 0.0,
-                attach: 4,
-                rotation: 0.0,
-                style: "Standard".into(),
-                contents: t.into(),
-                line_spacing: 1.0,
-                line_spacing_exact: false,
-                columns: None,
-            }))?
-            .hex(),
-        );
+    if let (Some(t), Some(last)) = (text, pts.last()) {
+        let th = ds.text_height * k;
+        let gap = ds.text_gap.abs() * k;
+        let style = if s.doc()?.text_style(&ds.text_style).is_some() { ds.text_style.clone() } else { "Standard".into() };
+        let th_h = s.add_entity(EntityKind::MText(MText {
+            insert: v3(*last + Vec2::new(dir * gap, 0.0)),
+            height: th,
+            width: 0.0,
+            // Middle left after a landing to the right, middle right after one to the left.
+            attach: if dir > 0.0 { 4 } else { 6 },
+            rotation: 0.0,
+            style,
+            contents: t,
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        }))?;
+        if !matches!(ds.text_color, cadcraft_doc::color::Color::ByBlock) {
+            let c = ds.text_color;
+            s.doc_mut()?.modify_entity(th_h, |e| e.common.color = c).map_err(|e| bad("leader", e.to_string()))?;
+        }
+        out.push(th_h.hex());
     }
     Ok(json!({ "handles": out }))
 }

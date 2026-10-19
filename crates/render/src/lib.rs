@@ -1199,11 +1199,26 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         EntityKind::Tolerance(t) => tolerance::draw(b, ctx, e, t, lw, tol),
         EntityKind::Leader(l) => {
             let pts: Vec<Vec2> = l.vertices.iter().map(|v| v.xy()).collect();
-            stroke(b, &pts);
+            let st = ctx.d.dim_style(&l.style);
+            // DIMCLRD of the leader's style colours it (ByBlock = the leader's own colour), as
+            // dimension lines are.
+            let rgb = match st.map(|s| s.dim_line_color) {
+                Some(c) if !matches!(c, Color::ByBlock) => {
+                    let layer_name = if e.common.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { e.common.layer.as_str() };
+                    let layer_color = ctx.layer_color(layer_name).unwrap_or(Color::Index(7));
+                    let own = match e.common.color {
+                        Color::ByLayer => layer_color,
+                        Color::ByBlock => ctx.block_color,
+                        c => c,
+                    };
+                    ink(c, layer_color, own)
+                }
+                _ => rgb,
+            };
+            stroke_with(b, ctx, rgb, lw, lt.as_ref(), ltscale, &pts);
             if l.arrow
                 && let (Some(a), Some(n)) = (pts.first(), pts.get(1))
             {
-                let st = ctx.d.dim_style(&l.style);
                 // DIMASZ × DIMSCALE of the leader's style (the drawing's DIMSCALE when it is 0).
                 let size = st.map(|s| s.arrow_size).unwrap_or(0.18) * leader_scale(ctx.d, st);
                 // DIMLDRBLK ("" = closed filled).

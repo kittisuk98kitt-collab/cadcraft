@@ -30,7 +30,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("-linetype", "Linetype", run_linetype).params("{current?, load?, file? | text?, reload?} (as LINETYPE)").interactive(|_| Ok(Box::new(linfile::DashLinetype::new()))),
         CommandSpec::new("lweight", "Lineweight...", run_lweight).menu(&["Format", "Lineweight..."]).alias(&["lw", "lineweight"]).params("{lineweight: mm | ByLayer}"),
-        CommandSpec::new("ltscale", "Linetype Scale", run_ltscale).alias(&["lts"]).params("{scale}"),
+        CommandSpec::new("ltscale", "Linetype Scale", run_ltscale)
+            .alias(&["lts"])
+            .params("{scale}")
+            .interactive(|_| Ok(Box::new(LtscaleM))),
         CommandSpec::new("units", "Units...", run_units).menu(&["Format", "Units..."]).alias(&["un"]).params("{lunits?: 1..5, luprec?: 0..8, aunits?: 0..4, auprec?: 0..8, insunits?}"),
         CommandSpec::new("limits", "Drawing Limits", run_limits).menu(&["Format", "Drawing Limits"]).params("{min: [x,y], max: [x,y]}"),
         CommandSpec::new("style", "Text Style...", run_style)
@@ -469,6 +472,31 @@ fn run_ltscale(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.doc_mut()?.header.set_f64("LTSCALE", v);
     Ok(json!({ "message": "Regenerating model." }))
+}
+
+/// LTSCALE typed: asks for the new factor (Enter keeps the current one).
+struct LtscaleM;
+
+impl crate::Interactive for LtscaleM {
+    fn name(&self) -> &'static str {
+        "LTSCALE"
+    }
+    fn prompt(&self, s: &Session) -> crate::Prompt {
+        let cur = s.doc().map(|d| d.header.f64("LTSCALE", 1.0)).unwrap_or(1.0);
+        crate::Prompt::new("Enter new linetype scale factor", crate::Accept::NUMBER).default(format!("{cur}"))
+    }
+    fn input(&mut self, s: &mut Session, i: crate::Input) -> Result<crate::Step> {
+        let v = match i {
+            crate::Input::Enter | crate::Input::Cancel => return Ok(crate::Step::Done),
+            crate::Input::Text(t) | crate::Input::Keyword(t) => {
+                t.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0).ok_or_else(|| bad("ltscale", "Enter a number greater than 0."))?
+            }
+            _ => return Ok(crate::Step::Continue),
+        };
+        run_ltscale(s, &json!({ "scale": v }))?;
+        s.echo("Regenerating model.");
+        Ok(crate::Step::Done)
+    }
 }
 
 fn run_units(s: &mut Session, p: &Value) -> Result<Value> {

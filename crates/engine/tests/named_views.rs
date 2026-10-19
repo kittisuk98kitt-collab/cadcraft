@@ -213,3 +213,29 @@ fn textedit_changes_multileader_text() {
         k => panic!("not a multileader: {}", k.type_name()),
     }
 }
+
+#[test]
+fn nested_refedit_edits_the_inner_block() {
+    let mut s = session();
+    // Block INNER: a line; block OUTER: a circle and a reference to INNER at (10, 0).
+    let model = |s: &cadcraft_engine::Session| s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect::<Vec<String>>();
+    let before = model(&s);
+    s.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap();
+    let first: Vec<String> = model(&s).into_iter().filter(|h| !before.contains(h)).collect();
+    s.execute("block", &json!({ "name": "INNER", "base": [0, 0], "handles": first })).unwrap();
+    let inner_lines = |s: &cadcraft_engine::Session| s.doc().unwrap().block("INNER").map(|b| b.entities.len());
+    assert_eq!(inner_lines(&s), Some(1));
+    let before = model(&s);
+    s.execute("insert", &json!({ "name": "INNER", "at": [10, 0] })).unwrap();
+    s.execute("circle", &json!({ "center": [0, 0], "radius": 2 })).unwrap();
+    let all: Vec<String> = model(&s).into_iter().filter(|h| !before.contains(h)).collect();
+    s.execute("block", &json!({ "name": "OUTER", "base": [0, 0], "handles": all })).unwrap();
+    let r = s.execute("insert", &json!({ "name": "OUTER", "at": [100, 0] })).unwrap();
+    let outer = r["handle"].as_str().map(str::to_string).unwrap();
+    let nested = s.doc().unwrap().block("OUTER").unwrap().entities.iter().find(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::Insert(_))).unwrap().handle.hex();
+    let r = s.execute("refedit", &json!({ "handle": outer, "nested": [nested] })).unwrap();
+    assert_eq!(r["block"], json!("INNER"));
+    s.execute("line", &json!({ "points": [[110, 5], [111, 5]] })).unwrap();
+    s.execute("refclose", &json!({ "save": true })).unwrap();
+    assert_eq!(inner_lines(&s), Some(2));
+}

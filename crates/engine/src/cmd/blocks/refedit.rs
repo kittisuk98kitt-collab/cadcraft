@@ -11,18 +11,19 @@
 //! The state is [`Drawing::refedit`]: it travels with undo, is never written to a file (files
 //! are written from [`Drawing::committed`]) and ends with the drawing it belongs to.
 //!
-//! Not yet: external references (their source drawing would have to be written back), nested
-//! references picked at a depth, annotative scale contexts and attribute synchronisation.
+//! A nested reference is edited through its enclosing ones (`nested`, or the level asked for after
+//! the pick). Not yet: external references (their source drawing would have to be written back),
+//! annotative scale contexts and attribute synchronisation.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use cadcraft_doc::{Drawing, Entity, EntityStore, Handle, RefEdit, Transparency, WorkItem};
-use cadcraft_geom::Mat3;
+use cadcraft_geom::{Mat3, Vec2};
 use serde_json::{Value, json};
 
 use super::super::curves::handle_value;
-use super::super::machines::{SelOutcome, SelectPhase, SelectRun};
+use super::super::machines::{SelOutcome, SelectPhase};
 use super::references_block;
 use crate::cmd::{CommandSpec, bad, bool_or, has_doc, str_param, targets};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
@@ -36,7 +37,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .menu(&["Tools", "Xref and Block In-place Editing", "Edit Reference In-Place"])
             .params("{handle? | handles? | name? (a block reference, default the selection), objects?: [block object handles] (default all)} → {block, insert, working: [handles], faded}")
             .enabled(has_doc)
-            .interactive(|_| Ok(Box::new(RefeditM(SelectRun::single("refedit", "REFEDIT", "Select reference"))))),
+            .interactive(|_| Ok(Box::new(RefeditM::default()))),
         CommandSpec::new("refset", "Working Set", run_refset)
             .menu(&["Tools", "Xref and Block In-place Editing", "Add to Working Set"])
             .params("{add?: [handles], remove?: [handles]} (or {handles, mode?: \"add\"|\"remove\"}); with neither: lists the working set → {working: [handles], added, removed}")
@@ -50,29 +51,115 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-/// REFEDIT picking its reference. A pickfirst selection without a block reference in it (left
-/// over from earlier clicks) is dropped first, so the prompt asks for the reference instead of
-/// failing on that selection and then adding the pick to it.
-struct RefeditM(SelectRun);
+/// Deepest nesting REFEDIT follows (and accepts in `nested`).
+const MAX_NESTING: usize = 16;
+
+/// The block references nested inside reference `h` under drawing point `p`, outermost first:
+/// at each level the smallest reference whose extents hold the point. Each entry is the
+/// reference's handle in its block and that block's name.
+fn nested_at(s: &Session, h: Handle, p: Vec2) -> Vec<(Handle, String)> {
+    let mut out = Vec::new();
+    let Ok(d) = s.doc() else { return out };
+    let Some(cadcraft_doc::EntityKind::Insert(ins)) = d.entity(h).map(|e| &e.kind) else { return out };
+    let Some(mut blk) = d.block(&ins.block).cloned() else { return out };
+    let mut tw = ins.transform(blk.base.xy());
+    let ap = crate::cmd::curves::pick_aperture(s);
+    while out.len() < MAX_NESTING {
+        let Some(inv) = tw.inverse() else { break };
+        let lp = inv.apply(p);
+        let scale = tw.det().abs().sqrt().max(1e-12);
+        let tol = ap / scale;
+        let best = blk
+            .entities
+            .iter()
+            .filter(|e| matches!(e.kind, cadcraft_doc::EntityKind::Insert(_)))
+            .filter_map(|e| {
+                let b = cadcraft_doc::entity_bounds(d, e, 0);
+                (!b.is_empty() && b.expand(tol).contains(lp)).then(|| (e, (b.max.x - b.min.x) * (b.max.y - b.min.y)))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(e, _)| e.clone());
+        let Some(e) = best else { break };
+        let cadcraft_doc::EntityKind::Insert(ni) = &e.kind else { break };
+        let Some(nb) = d.block(&ni.block).cloned() else { break };
+        tw = tw.then_before(ni.transform(nb.base.xy()));
+        out.push((e.handle, nb.name.clone()));
+        blk = nb;
+    }
+    out
+}
+
+/// REFEDIT typed: pick the reference, then, when it holds nested references under the pick, the
+/// level to edit (1 = the picked reference, as AutoCAD's Reference Edit dialog lists them).
+#[derive(Default)]
+struct RefeditM {
+    picked: Option<(Handle, Vec<(Handle, String)>)>,
+}
+
+impl RefeditM {
+    fn run(&self, s: &mut Session, h: Handle, depth: usize) -> Result<Step> {
+        let nested: Vec<String> = self.picked.as_ref().map(|(_, c)| c.iter().take(depth).map(|(h, _)| h.hex()).collect()).unwrap_or_default();
+        let r = run_refedit(s, &json!({ "handle": h.hex(), "nested": nested }))?;
+        if let Some(b) = r.get("block").and_then(Value::as_str) {
+            s.echo(format!("Editing \"{b}\" in place. REFCLOSE saves or discards the changes."));
+        }
+        Ok(Step::Done)
+    }
+}
 
 impl Interactive for RefeditM {
     fn name(&self) -> &'static str {
-        self.0.name()
-    }
-    fn prompt(&self, s: &Session) -> Prompt {
-        self.0.prompt(s)
-    }
-    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        self.0.input(s, i)
+        "REFEDIT"
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        let has_ref = s.doc().is_ok_and(|d| {
-            s.selection().iter().any(|h| d.entity(*h).is_some_and(|e| matches!(e.kind, cadcraft_doc::EntityKind::Insert(_))))
-        });
-        if !has_ref {
-            s.set_selection(Vec::new());
+        s.set_selection(Vec::new());
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match &self.picked {
+            None => Prompt::new("Select reference", Accept::POINT),
+            Some((_, chain)) => {
+                let keys: Vec<String> = (1..=chain.len() + 1).map(|n| n.to_string()).collect();
+                let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+                Prompt::new("Select nesting level to edit", crate::cmd::curves::KW).kw(&refs).default("1")
+            }
         }
-        self.0.begin(s)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some((h, chain)) = self.picked.clone() {
+            let level = match i {
+                Input::Enter => 1,
+                Input::Keyword(t) | Input::Text(t) => t.trim().parse::<usize>().ok().filter(|n| (1..=chain.len() + 1).contains(n)).ok_or_else(|| {
+                    crate::EngineError::Other(format!("Enter a level from 1 to {}.", chain.len() + 1))
+                })?,
+                Input::Cancel => return Ok(Step::Done),
+                _ => return Ok(Step::Continue),
+            };
+            return self.run(s, h, level - 1);
+        }
+        match i {
+            Input::Point(p) => {
+                let h = crate::cmd::curves::pick_at(s, p)
+                    .filter(|h| s.doc().ok().and_then(|d| d.entity(*h)).is_some_and(|e| matches!(e.kind, cadcraft_doc::EntityKind::Insert(_))))
+                    .ok_or_else(|| crate::EngineError::Other("Select a block reference.".into()))?;
+                let chain = nested_at(s, h, p);
+                if chain.is_empty() {
+                    return self.run(s, h, 0);
+                }
+                let outer = match s.doc().ok().and_then(|d| d.entity(h)).map(|e| &e.kind) {
+                    Some(cadcraft_doc::EntityKind::Insert(i)) => i.block.clone(),
+                    _ => String::new(),
+                };
+                s.echo(format!("Nesting levels at the pick: 1 = {outer}"));
+                for (k, (_, name)) in chain.iter().enumerate() {
+                    s.echo(format!("  {} = {}{}", k + 2, "  ".repeat(k + 1), name));
+                }
+                self.picked = Some((h, chain));
+                Ok(Step::Continue)
+            }
+            Input::Enter | Input::Cancel => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
     }
 }
 
@@ -145,11 +232,31 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
             ),
         ));
     }
+    let mut to_world = ins.transform(blk.base.xy());
+    // A nested reference: `nested` names a block reference inside the picked one's block, then one
+    // inside that, and so on. The innermost is edited; the enclosing blocks' other objects stay
+    // in view as faded copies.
+    let mut blk = blk;
+    let mut levels: Vec<(Arc<cadcraft_doc::Block>, Mat3, Handle)> = Vec::new();
+    for v in p.get("nested").and_then(Value::as_array).into_iter().flatten().take(MAX_NESTING) {
+        let nh = handle_value(v).ok_or_else(|| bad("refedit", format!("`nested`: {v} is not an object handle")))?;
+        let ni = match blk.entities.get(nh).map(|e| &e.kind) {
+            Some(cadcraft_doc::EntityKind::Insert(i)) => i.clone(),
+            _ => return Err(bad("refedit", format!("object {} is not a block reference in block \"{}\"", nh.hex(), blk.name))),
+        };
+        let nb = d.block(&ni.block).cloned().ok_or_else(|| bad("refedit", format!("block \"{}\" not found", ni.block)))?;
+        if nb.xref_path.is_some() {
+            return Err(bad("refedit", format!("\"{}\" is an external reference and can't be edited in place yet", nb.name)));
+        }
+        let next = to_world.then_before(ni.transform(nb.base.xy()));
+        levels.push((blk, to_world, nh));
+        blk = nb;
+        to_world = next;
+    }
     if blk.name.starts_with('*') || blk.array.is_some() {
         return Err(bad("refedit", format!("\"{}\" is generated geometry and can't be edited in place", blk.name)));
     }
-    let to_world = ins.transform(blk.base.xy());
-    let (sx, sy) = (ins.scale.x.abs(), ins.scale.y.abs());
+    let (sx, sy) = (to_world.a.hypot(to_world.b), to_world.c.hypot(to_world.d));
     let finite = [to_world.a, to_world.b, to_world.c, to_world.d, to_world.e, to_world.f].iter().all(|v| v.is_finite());
     if !finite || to_world.det().abs() < 1e-12 || (sx - sy).abs() > 1e-9 * sx.max(sy) {
         return Err(bad("refedit", "the reference must be scaled equally in X and Y (and not flat) to be edited in place"));
@@ -183,8 +290,16 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
         items: Vec::new(),
         ghosts: Vec::new(),
         released: Vec::new(),
+        context: Vec::new(),
     };
     let doc = s.doc_mut()?;
+    for (lb, ltw, child) in &levels {
+        for e in lb.entities.iter().filter(|e| e.handle != *child) {
+            let h = doc.new_handle();
+            put(doc, &r, to_host(ltw, e, h, true))?;
+            r.context.push(h);
+        }
+    }
     for e in blk.entities.iter() {
         let working = chosen.as_ref().is_none_or(|c| c.contains(&e.handle));
         let h = doc.new_handle();
@@ -371,7 +486,8 @@ pub(crate) fn after_command(s: &mut Session, before: &Arc<Drawing>, id: &str) ->
         return None;
     }
     let ra = st.doc.refedit.as_ref().filter(|ra| ra.insert == rb.insert)?;
-    let owned: HashSet<Handle> = rb.items.iter().map(|i| i.copy).chain(rb.ghosts.iter().map(|g| g.0)).chain([rb.insert]).collect();
+    let owned: HashSet<Handle> =
+        rb.items.iter().map(|i| i.copy).chain(rb.ghosts.iter().map(|g| g.0)).chain(rb.context.iter().copied()).chain([rb.insert]).collect();
     let stores = |d: &Drawing| std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).cloned().collect::<Vec<_>>();
     let touched = stores(before)
         .iter()

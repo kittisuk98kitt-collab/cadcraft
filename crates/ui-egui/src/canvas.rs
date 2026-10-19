@@ -1421,10 +1421,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             matches!(&e.kind, cadcraft_engine::doc::EntityKind::Insert(i) if i.attribs.iter().any(|a| !a.constant))
         });
         if has_attribs {
-            app.start("attedit");
-            if let Err(e) = app.session.input(Input::Pick(vec![h])) {
-                app.session.echo(e.to_string());
-            }
+            crate::eattedit::open(app, h);
         } else {
             // Errors are echoed on the command line by `run`.
             let _ = app.run("bedit", serde_json::json!({ "handle": h.hex() }));

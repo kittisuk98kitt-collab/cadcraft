@@ -20,6 +20,7 @@ pub mod context_menu;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod eattedit;
 pub mod docking;
 pub mod hatchdlg;
 mod mtext_editor;
@@ -243,6 +244,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Enhanced Attribute Editor ([`eattedit`]).
+    pub eattedit: eattedit::State,
 }
 
 impl CadApp {
@@ -281,6 +284,7 @@ impl CadApp {
             gpu_notice: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            eattedit: eattedit::State::default(),
         }
     }
 
