@@ -51,7 +51,9 @@ fn craft_fonts(dir: &std::path::Path) -> Result<String, String> {
             continue;
         }
         let arabic = scripts.split(',').any(|s| s.trim() == "Arab");
-        let web_face = (*family == "BIZ UDPGothic" && *style == "Regular") || arabic;
+        // Thai too (Kitt Edition): drawings and the interface in Thai on the web.
+        let thai = scripts.split(',').any(|s| s.trim() == "Thai");
+        let web_face = (*family == "BIZ UDPGothic" && *style == "Regular") || arabic || thai;
         if wasm && !web_face {
             continue;
         }

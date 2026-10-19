@@ -238,17 +238,23 @@ impl Section {
         let (h, b, t1, t2, r1, r2) = (self.h, self.b, self.t1, self.t2, self.r1, self.r2);
         let p = Vec2::new;
         match self.kind {
-            // Web on the left, flanges to the right.
-            "C" => vec![rounded(&[
-                (p(0.0, 0.0), 0.0),
-                (p(b, 0.0), 0.0),
-                (p(b, t2), r2),
-                (p(t1, t2), r1),
-                (p(t1, h - t2), r1),
-                (p(b, h - t2), r2),
-                (p(b, h), 0.0),
-                (p(0.0, h), 0.0),
-            ])],
+            // Web on the left, flanges to the right. The flanges' inner faces slope 5° (JIS
+            // channels), t2 being the thickness halfway along the flange's inner face.
+            "C" => {
+                let slope = 5f64.to_radians().tan();
+                let half = (b - t1) / 2.0;
+                let (root, toe) = (t2 + half * slope, (t2 - half * slope).max(t2 * 0.3));
+                vec![rounded(&[
+                    (p(0.0, 0.0), 0.0),
+                    (p(b, 0.0), 0.0),
+                    (p(b, toe), r2),
+                    (p(t1, root), r1),
+                    (p(t1, h - root), r1),
+                    (p(b, h - toe), r2),
+                    (p(b, h), 0.0),
+                    (p(0.0, h), 0.0),
+                ])]
+            }
             // Vertical leg A (height), horizontal leg B.
             "L" => vec![rounded(&[(p(0.0, 0.0), 0.0), (p(b, 0.0), 0.0), (p(b, t1), r2), (p(t1, t1), r1), (p(t1, h), r2), (p(0.0, h), 0.0)])],
             "H" => {

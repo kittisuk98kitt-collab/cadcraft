@@ -367,6 +367,13 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
     // A sans-serif face reads best in the interface.
     embedded.sort_by_key(|f| !f.family.contains("Gothic") && !f.family.contains("Sans"));
     added.extend(embedded.first().map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))));
+    // Thai (layer names, text, the command line): an embedded Thai face after the others.
+    added.extend(
+        cadcraft_fonts::CRAFT_FONTS
+            .iter()
+            .find(|f| f.style == "Regular" && f.scripts.contains(&"Thai"))
+            .map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))),
+    );
     // Korean: Noto Sans CJK and most CJK fonts above already cover Hangul; else a Hangul font.
     if language == "ko"
         && !cjk_covers_hangul()
