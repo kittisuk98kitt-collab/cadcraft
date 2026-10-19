@@ -119,7 +119,7 @@ impl Interactive for RefeditM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match &self.picked {
-            None => Prompt::new("Select reference", Accept::SELECT),
+            None => Prompt::new("Select reference", Accept::POINT),
             Some((_, chain)) => {
                 let keys: Vec<String> = (1..=chain.len() + 1).map(|n| n.to_string()).collect();
                 let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
