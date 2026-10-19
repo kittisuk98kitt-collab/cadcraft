@@ -1403,8 +1403,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         hatch_dialog = true;
     }
 
-    // Double-click a block reference (no command running) to edit its block in the Block Editor,
-    // as in AutoCAD. The click is used up like the hatch's.
+    // Double-click a block reference (no command running) to edit its attributes, or its block in
+    // the Block Editor, as in AutoCAD. The click is used up like the hatch's.
     if inside
         && dbl_primary
         && !hatch_dialog
@@ -1415,8 +1415,20 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     {
         app.session.set_selection(Vec::new());
         app.canvas.hot_grips.clear();
-        // Errors are echoed on the command line by `run`.
-        let _ = app.run("bedit", serde_json::json!({ "handle": h.hex() }));
+        // A reference with attributes to fill in (a balloon, a title block) edits its attribute
+        // values, as AutoCAD's double-click does (EATTEDIT); any other opens its block.
+        let has_attribs = app.session.doc().ok().and_then(|d| d.entity(h)).is_some_and(|e| {
+            matches!(&e.kind, cadcraft_engine::doc::EntityKind::Insert(i) if i.attribs.iter().any(|a| !a.constant))
+        });
+        if has_attribs {
+            app.start("attedit");
+            if let Err(e) = app.session.input(Input::Pick(vec![h])) {
+                app.session.echo(e.to_string());
+            }
+        } else {
+            // Errors are echoed on the command line by `run`.
+            let _ = app.run("bedit", serde_json::json!({ "handle": h.hex() }));
+        }
         hatch_dialog = true;
     }
 
