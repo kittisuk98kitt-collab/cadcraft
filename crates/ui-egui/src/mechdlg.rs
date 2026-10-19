@@ -65,6 +65,10 @@ fn buttons(ui: &mut egui::Ui, answer: &mut Option<bool>) {
 
 fn pipe(app: &mut CadApp, ctx: &egui::Context) {
     let id = egui::Id::new("pipe_dialog_draft");
+    // The Settings option's dialog goes with its command (Escape ends both).
+    if app.session.pipe_dialog && !app.session.running.as_ref().is_some_and(|r| r.id == "pipe") {
+        app.session.pipe_dialog = false;
+    }
     if !app.session.pipe_dialog && app.session.pipe_edit.is_none() {
         ctx.data_mut(|d| {
             d.remove::<PipeDraft>(id);
@@ -167,6 +171,9 @@ const STEEL_KINDS: &[(&str, &str)] = &[
 
 fn steel(app: &mut CadApp, ctx: &egui::Context) {
     let id = egui::Id::new("steel_dialog_draft");
+    if app.session.steel_dialog && !app.session.running.as_ref().is_some_and(|r| r.id == "steel") {
+        app.session.steel_dialog = false;
+    }
     if !app.session.steel_dialog && app.session.steel_edit.is_none() {
         ctx.data_mut(|d| {
             d.remove::<SteelDraft>(id);

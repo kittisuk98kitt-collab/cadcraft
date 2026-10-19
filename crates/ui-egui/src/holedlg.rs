@@ -22,7 +22,11 @@ struct Draft {
     sizes: Vec<Value>,
 }
 
-pub fn wanted(app: &CadApp) -> bool {
+pub fn wanted(app: &mut CadApp) -> bool {
+    // The Settings option's dialog goes with its command (Escape ends both).
+    if app.session.hole_dialog && !app.session.running.as_ref().is_some_and(|r| r.id.starts_with("taphole")) {
+        app.session.hole_dialog = false;
+    }
     app.session.hole_dialog || app.ui.dialog.as_deref() == Some("hole")
 }
 

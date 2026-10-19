@@ -49,7 +49,10 @@ fn arrow_label(name: &str) -> &'static str {
 }
 
 /// Whether the dialog is up: asked by QLEADER's Settings option, or opened on its own.
-pub fn wanted(app: &CadApp) -> bool {
+pub fn wanted(app: &mut CadApp) -> bool {
+    if app.session.qleader_dialog && !app.session.running.as_ref().is_some_and(|r| r.id == "qleader") {
+        app.session.qleader_dialog = false;
+    }
     app.session.qleader_dialog || app.ui.dialog.as_deref() == Some("qleader")
 }
 
