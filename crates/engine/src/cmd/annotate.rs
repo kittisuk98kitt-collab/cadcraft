@@ -620,6 +620,17 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
         let end = pts[n - 1] + Vec2::new(dir * ds.arrow_size * k, 0.0);
         pts.push(end);
     }
+    let th = ds.text_height * k;
+    let gap = ds.text_gap.abs() * k;
+    let width = p.get("width").and_then(Value::as_f64).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(0.0);
+    // Underline bottom line (QLEADER): the text sits on the leader, whose landing runs on under
+    // the whole text.
+    let underline = flag("underline", def.underline) && !lines.is_empty();
+    let hook_end = pts.last().copied().unwrap_or_default();
+    if underline {
+        let w = if width > 0.0 { width } else { lines.iter().map(|l| cadcraft_fonts::line_width(l, th, 1.0)).fold(0.0, f64::max) };
+        pts.push(hook_end + Vec2::new(dir * (w + 2.0 * gap), 0.0));
+    }
     let arrow_name = p.get("arrow").and_then(Value::as_str).unwrap_or("").trim().to_string();
     let no_arrow = arrow_name.eq_ignore_ascii_case("none");
     let h = s.add_entity(EntityKind::Leader(cadcraft_doc::Leader {
@@ -631,18 +642,19 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     }))?;
     let mut out = vec![h.hex()];
     let end = pts.last().copied().unwrap_or_default();
-    let th = ds.text_height * k;
-    let gap = ds.text_gap.abs() * k;
     if !lines.is_empty() {
-        let width = p.get("width").and_then(Value::as_f64).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(0.0);
         let at = if right { small("attachRight", def.attach_right) } else { small("attachLeft", def.attach_left) };
-        let bx = leader_text_box(end, right, at, &lines, th, gap, width, flag("leftJustify", def.left_justify));
-        let mut ls = lines.clone();
-        if flag("underline", def.underline)
-            && let Some(l) = ls.last_mut()
-        {
-            *l = format!("\\L{l}\\l");
+        let mut bx = leader_text_box(hook_end, right, at, &lines, th, gap, width, flag("leftJustify", def.left_justify));
+        if underline {
+            // Bottom of the text a gap above the landing, starting a gap past the hook.
+            let n = lines.len().max(1) as f64;
+            let total = th + (n - 1.0) * th * 5.0 / 3.0;
+            let x0 = if right { hook_end.x + gap } else { end.x + gap };
+            let x1 = if right { end.x - gap } else { hook_end.x - gap };
+            let y0 = hook_end.y + gap;
+            bx = LeaderText { insert: Vec2::new(x0, y0), attach: 7, min: Vec2::new(x0, y0), max: Vec2::new(x1, y0 + total) };
         }
+        let ls = lines.clone();
         let style = if s.doc()?.text_style(&ds.text_style).is_some() { ds.text_style.clone() } else { "Standard".into() };
         let th_h = s.add_entity(EntityKind::MText(MText {
             insert: v3(bx.insert),

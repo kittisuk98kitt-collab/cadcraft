@@ -132,8 +132,9 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
         // Tabs.
         let tab_h = 28.0;
         let mut x = r.left();
-        for name in ["Drafting", "Modeling"] {
-            let w = 92.0;
+        let tabs = ["Drafting", "Modeling", "Hole"];
+        let w = ((r.width() - 28.0) / tabs.len() as f32).clamp(56.0, 92.0);
+        for name in tabs {
             let tr = Rect::from_min_size(pos2(x, r.top()), vec2(w, tab_h));
             let active = app.ui.toolset_tab == name;
             let resp = ui.interact(tr, ui.id().with(("ts", name)), Sense::click());
@@ -167,7 +168,11 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
         ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                let groups: &[(&str, &[Tool], &[Tool])] = if app.ui.toolset_tab == "Drafting" { DRAFTING } else { MODELING };
+                let groups: &[(&str, &[Tool], &[Tool])] = match app.ui.toolset_tab.as_str() {
+                    "Drafting" => DRAFTING,
+                    "Hole" => HOLE,
+                    _ => MODELING,
+                };
                 for (name, large, small) in groups {
                     let collapsed = app.ui.collapsed_groups.iter().any(|g| g == name);
                     // Header.
@@ -273,6 +278,21 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
         }
     });
 }
+
+/// The Hole tab: tapped holes to JIS, drilled holes and springs.
+pub const HOLE: &[(&str, &[Tool], &[Tool])] = &[
+    (
+        "Tapped Hole",
+        &[
+            (Icon::Circle, "taphole.m", "Tapped Hole M"),
+            (Icon::Circle, "taphole.mf", "Tapped Hole M Fine"),
+            (Icon::Donut, "taphole.g", "Tapped Hole G"),
+            (Icon::Donut, "taphole.pt", "Tapped Hole PT"),
+        ],
+        &[(Icon::Circle, "taphole.drill", "Drilled Hole"), (Icon::Gear, "taphole", "Hole Settings")],
+    ),
+    ("Spring", &[(Icon::Spline, "spring", "Compression Spring")], &[]),
+];
 
 pub const MODELING: &[(&str, &[Tool], &[Tool])] = &[
     (

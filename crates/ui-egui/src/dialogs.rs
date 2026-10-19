@@ -13,6 +13,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::quick::quick_properties(app, ctx);
     reference_edit(app, ctx);
     crate::qleaderdlg::show(app, ctx);
+    crate::holedlg::show(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
     let mut open = true;
     match d.as_str() {
@@ -31,7 +32,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "bedit" => crate::bedit::dialog(app, ctx, &mut open),
         "eattedit" => crate::eattedit::dialog(app, ctx, &mut open),
         // Drawn by `qleaderdlg::show` above.
-        "qleader" => {}
+        "qleader" | "hole" => {}
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),

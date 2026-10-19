@@ -590,6 +590,48 @@ pub struct MLeaderOptions {
     pub block_center: bool,
 }
 
+/// TAPHOLE's settings (its Hole dialog): thread kind and size, view, depths, callout.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HoleSettings {
+    /// M (metric coarse), MF (metric fine), G (parallel pipe), PT (taper pipe), DRILL.
+    pub kind: String,
+    /// Designation from the kind's table ("M8", "G1/4", "PT1/4").
+    pub size: String,
+    /// "top" or "side".
+    pub view: String,
+    pub through: bool,
+    /// Part thickness for a through hole in side view.
+    pub thickness: f64,
+    /// 0: from the table.
+    pub thread_depth: f64,
+    /// 0: thread depth plus four pitches.
+    pub drill_depth: f64,
+    /// Drill diameter (DRILL).
+    pub drill: f64,
+    /// Side view: degrees the hole turns from pointing down.
+    pub angle: f64,
+    /// Place the size callout beside each hole.
+    pub note: bool,
+}
+
+impl Default for HoleSettings {
+    fn default() -> Self {
+        HoleSettings {
+            kind: "M".into(),
+            size: "M8".into(),
+            view: "top".into(),
+            through: false,
+            thickness: 20.0,
+            thread_depth: 0.0,
+            drill_depth: 0.0,
+            drill: 9.0,
+            angle: 0.0,
+            note: false,
+        }
+    }
+}
+
 /// One recorded step of an action macro (ACTRECORD … ACTSTOP; PLAY replays them).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
@@ -749,6 +791,12 @@ pub struct Session {
     pub recording: Option<Vec<ActStep>>,
     /// The last SPRING's sizes (the defaults of the next).
     pub last_spring: Option<cmd::spring::Spec>,
+    /// TAPHOLE's settings; `hole_dialog` asks the UI for the Hole dialog.
+    pub hole: HoleSettings,
+    pub hole_dialog: bool,
+    /// The last window drawn with no command running and what it selected (STRETCH with a
+    /// pickfirst selection stretches inside it).
+    pub last_idle_window: Option<(Bounds2, Vec<Handle>)>,
     pub actions: std::collections::BTreeMap<String, Vec<ActStep>>,
     pub clipboard: Vec<Entity>,
     pub clipboard_base: Vec2,
@@ -813,6 +861,9 @@ impl Session {
             qleader_reuse: None,
             recording: None,
             last_spring: None,
+            hole: HoleSettings::default(),
+            hole_dialog: false,
+            last_idle_window: None,
             actions: std::collections::BTreeMap::new(),
             clipboard: Vec::new(),
             clipboard_base: Vec2::ZERO,
@@ -1774,6 +1825,8 @@ impl Session {
             let crossing = p.x < pw.corner.x;
             let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
             let hs = cmd::groups::expand(self, hs);
+            // STRETCH started on this selection stretches what lies in the window.
+            self.last_idle_window = Some((Bounds2::new(pw.corner, p), hs.clone()));
             let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
             if shift && pickadd {
                 sel.retain(|h| !hs.contains(h));

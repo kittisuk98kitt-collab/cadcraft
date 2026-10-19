@@ -1570,6 +1570,17 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
     {
         app.canvas.drag_window = app.session.begin_window(xf.to_world(origin));
+        // A command that reads its own selection points (STRETCH keeps its windows): the drag is a
+        // BOX selection from where the button went down; letting go gives the other corner.
+        if !app.canvas.drag_window
+            && let Some(p) = app.session.current_prompt()
+            && p.accept.point
+            && !p.accept.select
+            && p.message.starts_with("Select")
+        {
+            let _ = app.session.input(Input::Keyword("BOX".into()));
+            let _ = app.session.input(Input::Point(xf.to_world(origin)));
+        }
     }
     if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
         app.canvas.drag_window = false;

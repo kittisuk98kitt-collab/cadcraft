@@ -477,6 +477,24 @@ impl Interactive for StretchM {
         "STRETCH"
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        // Objects selected before STRETCH (PICKFIRST): what a window drawn then holds stretches
+        // inside that window; anything picked on its own moves whole.
+        let pre = s.selection();
+        if s.settings.pickfirst && !pre.is_empty() {
+            let window = s.last_idle_window.clone().filter(|(_, hs)| hs.iter().any(|h| pre.contains(h)));
+            for h in &pre {
+                self.objs.push(*h);
+                if !window.as_ref().is_some_and(|(_, hs)| hs.contains(h)) {
+                    self.whole.push(*h);
+                }
+            }
+            if let Some((b, _)) = window {
+                self.windows.push(StretchArea::Box(b));
+            }
+            s.remember_selection(&self.objs);
+            self.phase = StretchPhase::Base;
+            return Ok(Step::Continue);
+        }
         s.set_selection(Vec::new());
         s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
         Ok(Step::Continue)

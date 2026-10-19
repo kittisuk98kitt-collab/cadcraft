@@ -23,6 +23,7 @@ pub mod dialogs;
 pub mod docking;
 pub mod eattedit;
 pub mod hatchdlg;
+pub mod holedlg;
 mod mtext_editor;
 pub mod qleaderdlg;
 pub mod spacemouse;
@@ -391,6 +392,9 @@ impl CadApp {
         if !self.session.actions.is_empty() {
             prefs["actions"] = json!(self.session.actions);
         }
+        if self.session.hole != cadcraft_engine::HoleSettings::default() {
+            prefs["hole"] = json!(self.session.hole);
+        }
         if self.session.qleader != cadcraft_engine::QLeaderSettings::default() {
             prefs["qleader"] = json!(self.session.qleader);
         }
@@ -435,6 +439,12 @@ impl CadApp {
                     (k, v)
                 })
                 .collect();
+        }
+        if let Some(h) = v.get("hole").and_then(|h| serde_json::from_value::<cadcraft_engine::HoleSettings>(h.clone()).ok()) {
+            // Checked by the engine like any other change; a bad saved value keeps the default.
+            if let Ok(h) = serde_json::to_value(&h) {
+                let _ = self.session.execute("taphole.settings", &h);
+            }
         }
         if let Some(q) = v.get("qleader").and_then(|q| serde_json::from_value::<cadcraft_engine::QLeaderSettings>(q.clone()).ok()) {
             self.session.qleader = q;

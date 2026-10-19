@@ -34,6 +34,7 @@ mod props;
 pub use props::MatchProps;
 pub mod actions;
 mod express;
+pub mod hole;
 mod qleader;
 mod qselect;
 mod selecttools;
@@ -185,6 +186,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(qleader::specs());
         v.extend(actions::specs());
         v.extend(spring::specs());
+        v.extend(hole::specs());
         v.extend(express::specs());
         v.extend(mleader_edit::specs());
         v.extend(annoscale::specs());

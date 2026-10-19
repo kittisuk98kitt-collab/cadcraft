@@ -154,3 +154,83 @@ fn spring_typed() {
     assert!(s.running.is_none());
     assert!(s.doc().unwrap().blocks.keys().any(|k| k.starts_with("SPRING_2_5x25x60")));
 }
+
+#[test]
+fn tapped_holes_from_the_jis_tables() {
+    let mut s = Session::new();
+    let r = s.execute("taphole", &json!({ "at": [[0, 0], [30, 0]], "kind": "M", "size": "M8" })).unwrap();
+    assert_eq!(r["drill"], 6.8);
+    assert_eq!(r["handles"].as_array().unwrap().len(), 2);
+    let r = s.execute("taphole", &json!({ "at": [0, 50], "kind": "G", "size": "1/4", "view": "side" })).unwrap();
+    assert_eq!(r["drill"], 11.8);
+    assert!(r["block"].as_str().unwrap().starts_with("HOLE_G1-4_SIDE"));
+    let r = s
+        .execute("taphole", &json!({ "at": [0, 90], "kind": "PT", "size": "Rc1/2", "view": "side", "through": true, "thickness": 25, "note": true }))
+        .unwrap();
+    assert_eq!(r["drill"], 18.3);
+    let r = s.execute("taphole", &json!({ "at": [0, 130], "kind": "MF", "size": "M10x1.25" })).unwrap();
+    assert_eq!(r["drill"], 8.8);
+    assert!(s.execute("taphole", &json!({ "at": [0, 0], "kind": "M", "size": "M7" })).is_err());
+    let st = s.execute("taphole.settings", &json!({ "kind": "pt" })).unwrap();
+    assert_eq!(st["kind"], "PT");
+    assert!(st["sizes"].as_array().unwrap().len() >= 10);
+}
+
+#[test]
+fn taphole_typed_settings_and_points() {
+    let mut s = Session::new();
+    typed(&mut s, &["taphole", "s"]);
+    assert!(s.hole_dialog);
+    typed(&mut s, &["10,10", "20,10", ""]);
+    assert!(s.running.is_none());
+    let n = s.doc().unwrap().model.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.starts_with("HOLE_M8"))).count();
+    assert_eq!(n, 2);
+}
+
+#[test]
+fn underline_puts_the_text_on_the_landing() {
+    let mut s = Session::new();
+    s.execute("qleader.settings", &json!({ "promptWidth": false, "underline": true })).unwrap();
+    typed(&mut s, &["qleader", "0,0", "10,10", "", "ABC", ""]);
+    let k = kinds(&s);
+    let l = k.iter().find_map(|k| if let EntityKind::Leader(l) = k { Some(l.clone()) } else { None }).unwrap();
+    let mt = k.iter().find_map(|k| if let EntityKind::MText(t) = k { Some(t.clone()) } else { None }).unwrap();
+    assert!(!mt.contents.contains("\\L"), "not an underline format code");
+    assert_eq!(mt.attach, 7);
+    let last = l.vertices.last().unwrap();
+    assert!((last.y - 10.0).abs() < 1e-9 && last.x > mt.insert.x, "the landing runs on under the text");
+    assert!(mt.insert.y > 10.0, "the text sits above the line");
+}
+
+#[test]
+fn stretch_uses_the_pickfirst_crossing_window() {
+    let mut s = Session::new();
+    s.viewport_px = (1200.0, 800.0);
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+    // Crossing window (right to left) around the right end only.
+    s.idle_click(cadcraft_engine::geom::Vec2::new(12.0, 2.0), false).unwrap();
+    s.idle_click(cadcraft_engine::geom::Vec2::new(8.0, -2.0), false).unwrap();
+    assert_eq!(s.selection().len(), 1);
+    typed(&mut s, &["stretch", "0,0", "5,0"]);
+    let k = kinds(&s);
+    let EntityKind::Line(l) = &k[0] else { panic!("line") };
+    assert!((l.a.x - 0.0).abs() < 1e-9 && (l.b.x - 15.0).abs() < 1e-9, "stretched, not moved: {:?} {:?}", l.a, l.b);
+}
+
+#[test]
+fn stretch_box_selection_stretches() {
+    let mut s = Session::new();
+    s.viewport_px = (1200.0, 800.0);
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+    s.start("stretch").unwrap();
+    // What the canvas sends for a press-and-drag from right to left.
+    s.input(cadcraft_engine::Input::Keyword("BOX".into())).unwrap();
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(12.0, 2.0))).unwrap();
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(8.0, -2.0))).unwrap();
+    typed(&mut s, &["", "0,0", "5,0"]);
+    let k = kinds(&s);
+    let EntityKind::Line(l) = &k[0] else { panic!("line") };
+    assert!((l.a.x - 0.0).abs() < 1e-9 && (l.b.x - 15.0).abs() < 1e-9, "{:?} {:?}", l.a, l.b);
+}
