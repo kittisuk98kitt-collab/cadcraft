@@ -64,10 +64,51 @@ const MAX_POINTS: usize = 500;
 /// Group descriptions of pipe runs start with this.
 const TAG: &str = "CADCRAFT_PIPE ";
 
+/// Nominal sizes in inches (B sizes) beside the A sizes.
+pub const INCHES: &[(&str, &str)] = &[
+    ("15A", "1/2"),
+    ("20A", "3/4"),
+    ("25A", "1"),
+    ("32A", "1-1/4"),
+    ("40A", "1-1/2"),
+    ("50A", "2"),
+    ("65A", "2-1/2"),
+    ("80A", "3"),
+    ("90A", "3-1/2"),
+    ("100A", "4"),
+    ("125A", "5"),
+    ("150A", "6"),
+    ("200A", "8"),
+    ("250A", "10"),
+    ("300A", "12"),
+    ("350A", "14"),
+    ("400A", "16"),
+    ("450A", "18"),
+    ("500A", "20"),
+];
+
+/// The size in inches ("2", "1-1/2") of an A size.
+pub fn inch(name: &str) -> &'static str {
+    INCHES.iter().find(|(a, _)| *a == name).map_or("", |(_, i)| i)
+}
+
+/// A size by its A designation ("50A", "50") or in inches ("2\"", "2B", "1-1/2", "1 1/2\"").
 pub fn size(name: &str) -> Option<Size> {
     let n = name.trim().to_ascii_uppercase();
-    let n = if n.ends_with('A') { n } else { format!("{n}A") };
-    SIZES.iter().find(|s| s.name == n).copied()
+    let n = n.split_once(' ').filter(|(_, r)| r.contains('/')).map_or(n.clone(), |(a, b)| format!("{a}-{b}"));
+    let bare = n.trim_end_matches(['"', 'B', '″']).trim().to_string();
+    let by_inch = INCHES.iter().find(|(_, i)| *i == bare).map(|(a, _)| (*a).to_string());
+    let a = match by_inch {
+        Some(a) if n.ends_with(['"', 'B', '″']) || bare.contains('/') || !SIZES.iter().any(|s| s.name == format!("{bare}A")) => a,
+        _ => {
+            if n.ends_with('A') {
+                n
+            } else {
+                format!("{n}A")
+            }
+        }
+    };
+    SIZES.iter().find(|s| s.name == a).copied()
 }
 
 /// A tee on a run: its centre on the run and the side its branch leaves to (+1 left of the run
@@ -325,7 +366,10 @@ fn geometry(spec: &RunSpec, sz: &Size) -> std::result::Result<Vec<Piece>, String
 
 /// The label along the longest segment.
 fn label_text(spec: &RunSpec) -> String {
-    format!("{} {}", spec.size, spec.schedule)
+    match inch(&spec.size) {
+        "" => format!("{} {}", spec.size, spec.schedule),
+        i => format!("{} ({i}\") {}", spec.size, spec.schedule),
+    }
 }
 
 fn add_run(s: &mut Session, spec: &RunSpec, group: Option<String>) -> Result<(String, Vec<Handle>)> {

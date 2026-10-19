@@ -278,3 +278,18 @@ fn steel_members_from_jis_tables() {
     let st = s.execute("steel.settings", &json!({ "kind": "L" })).unwrap();
     assert!(st["sizes"].as_array().unwrap().len() > 30);
 }
+
+#[test]
+fn pipe_sizes_in_inches() {
+    use cadcraft_engine::cmd::pipe::{inch, size};
+    assert_eq!(size("2\"").unwrap().name, "50A");
+    assert_eq!(size("1-1/2").unwrap().name, "40A");
+    assert_eq!(size("1 1/4\"").unwrap().name, "32A");
+    assert_eq!(size("3B").unwrap().name, "80A");
+    assert_eq!(size("50").unwrap().name, "50A");
+    assert_eq!(size("15A").unwrap().name, "15A");
+    assert_eq!(inch("100A"), "4");
+    let mut s = Session::new();
+    s.execute("pipe", &json!({ "points": [[0, 0], [500, 0]], "size": "2\"" })).unwrap();
+    assert!(kinds(&s).iter().any(|k| matches!(k, EntityKind::MText(t) if t.contents == "50A (2\") SGP")));
+}

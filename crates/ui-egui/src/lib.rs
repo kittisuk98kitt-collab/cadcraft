@@ -408,6 +408,29 @@ impl CadApp {
         prefs.to_string()
     }
 
+    /// The Kitt Edition default: new drawings start from the built-in company template unless
+    /// another default template is set (QNEWTEMPLATE), and an untouched blank first drawing is
+    /// replaced by it.
+    pub fn use_default_template(&mut self) {
+        use cadcraft_engine::cmd::file::template;
+        if template::qnew_template().is_empty() {
+            template::set_qnew_template(template::BUILTIN);
+        }
+        if template::qnew_template() != template::BUILTIN {
+            return;
+        }
+        let Some(d) = template::builtin_drawing() else { return };
+        for st in &mut self.session.docs {
+            let pristine = st.path.is_none() && st.undo.is_empty() && st.doc.model.is_empty() && std::sync::Arc::ptr_eq(&st.doc, &st.saved);
+            if pristine {
+                let d = std::sync::Arc::new(d.clone());
+                st.doc = d.clone();
+                st.saved = d;
+                st.set_view_quiet(cadcraft_engine::View { center: cadcraft_engine::geom::Vec2::new(210.0, 148.5), height: 297.0 });
+            }
+        }
+    }
+
     /// Restore preferences saved by [`Self::prefs_json`]; unknown or malformed values are ignored.
     pub fn load_prefs(&mut self, json: &str) {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };

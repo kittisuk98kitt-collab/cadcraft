@@ -107,9 +107,13 @@ fn pipe(app: &mut CadApp, ctx: &egui::Context) {
             ui.end_row();
             ui.label(crate::tl!("Size"));
             let mut size = s_of(v, "size");
-            egui::ComboBox::from_id_salt("pipe_size").selected_text(size.clone()).height(320.0).show_ui(ui, |ui| {
+            let with_inch = |n: &str| match cadcraft_engine::cmd::pipe::inch(n) {
+                "" => n.to_string(),
+                i => format!("{n}  ({i}\")"),
+            };
+            egui::ComboBox::from_id_salt("pipe_size").width(150.0).selected_text(with_inch(&size)).height(320.0).show_ui(ui, |ui| {
                 for n in &draft.sizes {
-                    ui.selectable_value(&mut size, n.clone(), n);
+                    ui.selectable_value(&mut size, n.clone(), with_inch(n));
                 }
             });
             v["size"] = json!(size);

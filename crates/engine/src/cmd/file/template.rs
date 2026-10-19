@@ -64,8 +64,23 @@ pub(super) fn run_new(s: &mut Session, p: &Value) -> Result<Option<Value>> {
     Ok(Some(json!({ "index": i, "title": title, "template": path })))
 }
 
+/// The built-in default template's name (QNEWTEMPLATE): this edition's company standard —
+/// layers, linetypes, text and dimension styles (ALSYS current), millimetres.
+pub const BUILTIN: &str = "<ALSYS default>";
+
+const BUILTIN_DXF: &[u8] = include_bytes!("../../../../../assets/kitt/default-template.dxf");
+
+/// The built-in default template as a drawing, when the file formats are available.
+pub fn builtin_drawing() -> Option<Drawing> {
+    let hooks = io()?;
+    (hooks.read)(BUILTIN_DXF, "default-template.dxf").ok()
+}
+
 /// Read a template drawing through the io hooks (DWG content for `.dwt`, or DXF).
 fn read_template(path: &str) -> Result<Drawing> {
+    if path == BUILTIN {
+        return builtin_drawing().ok_or_else(|| bad("new", "the built-in template could not be read"));
+    }
     let hooks = io().ok_or_else(|| bad("new", "file formats are not available in this build"))?;
     let bytes = read_bytes(path)?;
     (hooks.read)(&bytes, path).map_err(|e| bad("new", format!("template {path}: {e}")))

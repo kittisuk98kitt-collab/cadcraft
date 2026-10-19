@@ -3,7 +3,7 @@
 //! no file system, saved files reach the user through the host's [`crate::cmd::file::set_deliver`].
 
 mod pgp;
-mod template;
+pub mod template;
 
 use std::sync::OnceLock;
 
