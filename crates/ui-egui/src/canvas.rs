@@ -1417,9 +1417,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas.hot_grips.clear();
         // A reference with attributes to fill in (a balloon, a title block) edits its attribute
         // values, as AutoCAD's double-click does (EATTEDIT); any other opens its block.
-        let has_attribs = app.session.doc().ok().and_then(|d| d.entity(h)).is_some_and(|e| {
-            matches!(&e.kind, cadcraft_engine::doc::EntityKind::Insert(i) if i.attribs.iter().any(|a| !a.constant))
-        });
+        let has_attribs = app
+            .session
+            .doc()
+            .ok()
+            .and_then(|d| d.entity(h))
+            .is_some_and(|e| matches!(&e.kind, cadcraft_engine::doc::EntityKind::Insert(i) if i.attribs.iter().any(|a| !a.constant)));
         if has_attribs {
             crate::eattedit::open(app, h);
         } else {
@@ -1587,9 +1590,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     // OPTIONS rightClickRepeat: with no command, a quick right-click is Enter (repeat the last
     // command) unless it lands on a grip that has its own menu.
-    let idle_enter = idle
-        && app.options.right_click_repeat
-        && !grip_at(app, &xf, hover_pos).is_some_and(|g| !grip_options(app, g).is_empty());
+    let idle_enter = idle && app.options.right_click_repeat && !grip_at(app, &xf, hover_pos).is_some_and(|g| !grip_options(app, g).is_empty());
     if crate::context_menu::in_command(app, ui, inside, pressed_secondary, idle_enter) {
         let _ = app.session.input(Input::Enter);
     }
@@ -1898,7 +1899,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
 fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
     use cadcraft_engine::doc::EntityKind;
     let is_text = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
-        app.session.doc().ok()?.entity(h).map(|e| matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::MLeader(_)))
+        app.session
+            .doc()
+            .ok()?
+            .entity(h)
+            .map(|e| matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::MLeader(_)))
     });
     if is_text != Some(true) {
         return false;

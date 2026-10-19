@@ -232,7 +232,17 @@ fn nested_refedit_edits_the_inner_block() {
     s.execute("block", &json!({ "name": "OUTER", "base": [0, 0], "handles": all })).unwrap();
     let r = s.execute("insert", &json!({ "name": "OUTER", "at": [100, 0] })).unwrap();
     let outer = r["handle"].as_str().map(str::to_string).unwrap();
-    let nested = s.doc().unwrap().block("OUTER").unwrap().entities.iter().find(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::Insert(_))).unwrap().handle.hex();
+    let nested = s
+        .doc()
+        .unwrap()
+        .block("OUTER")
+        .unwrap()
+        .entities
+        .iter()
+        .find(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::Insert(_)))
+        .unwrap()
+        .handle
+        .hex();
     let r = s.execute("refedit", &json!({ "handle": outer, "nested": [nested] })).unwrap();
     assert_eq!(r["block"], json!("INNER"));
     s.execute("line", &json!({ "points": [[110, 5], [111, 5]] })).unwrap();

@@ -340,7 +340,9 @@ impl CadApp {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
         }
         let mut c = UiChanges::default();
-        for key in ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick", "rightClickRepeat"] {
+        for key in
+            ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick", "rightClickRepeat"]
+        {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
             }

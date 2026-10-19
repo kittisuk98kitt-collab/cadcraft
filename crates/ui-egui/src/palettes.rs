@@ -665,7 +665,12 @@ fn dimension_properties(
     group(ui, "Fit");
     num_row!("Dim scale overall", "DIMSCALE", es.scale);
     group(ui, "Primary Units");
-    menu_row!("Decimal separator", "DIMDSEP", if es.decimal_separator.is_empty() { ".".to_string() } else { es.decimal_separator.clone() }, [".", ",", " "].iter().map(|s| (*s).to_string()));
+    menu_row!(
+        "Decimal separator",
+        "DIMDSEP",
+        if es.decimal_separator.is_empty() { ".".to_string() } else { es.decimal_separator.clone() },
+        [".", ",", " "].iter().map(|s| (*s).to_string())
+    );
     let (prefix, suffix) = es.post.split_once("<>").map_or((String::new(), es.post.clone()), |(a, b)| (a.to_string(), b.to_string()));
     prop_row(ui, "Dim prefix", |ui| {
         if let Some(v) = edit_field(ui, ui.id().with(("DIMPOST-pre", ids)), prefix.clone()) {

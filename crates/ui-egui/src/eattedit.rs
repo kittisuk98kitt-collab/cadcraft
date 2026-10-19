@@ -37,11 +37,25 @@ fn rows_of(app: &CadApp, h: Handle) -> Option<(String, Vec<Row>)> {
     let EntityKind::Insert(i) = &d.entity(h)?.kind else { return None };
     // A dynamic block reference names its dynamic block, not its anonymous one (`*U12`).
     let block = cadcraft_engine::doc::dynblock::custom_properties(d, h).map_or_else(|| i.block.clone(), |(n, _)| n);
+    // Attributes in a file rarely carry their prompt: it lives on the block's attribute definition.
+    let def_prompt = |tag: &str| -> String {
+        d.block(&i.block)
+            .and_then(|b| {
+                b.entities.iter().find_map(|e| match &e.kind {
+                    EntityKind::AttDef(a) if a.tag.eq_ignore_ascii_case(tag) => Some(a.prompt.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default()
+    };
     let rows: Vec<Row> = i
         .attribs
         .iter()
         .filter(|a| !a.constant)
-        .map(|a| Row { tag: a.tag.clone(), prompt: a.prompt.clone(), value: a.text.value.clone(), stored: a.text.value.clone() })
+        .map(|a| {
+            let prompt = if a.prompt.trim().is_empty() { def_prompt(&a.tag) } else { a.prompt.clone() };
+            Row { tag: a.tag.clone(), prompt, value: a.text.value.clone(), stored: a.text.value.clone() }
+        })
         .collect();
     (!rows.is_empty()).then_some((block, rows))
 }
@@ -130,7 +144,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.horizontal(|ui| {
                 ui.label(crate::tl!("Value:"));
                 if let Some(r) = st.rows.get_mut(sel) {
-                    let resp = ui.add(egui::TextEdit::singleline(&mut r.value).id(egui::Id::new(("eattedit_value", sel))).desired_width(f32::INFINITY));
+                    let resp =
+                        ui.add(egui::TextEdit::singleline(&mut r.value).id(egui::Id::new(("eattedit_value", sel))).desired_width(f32::INFINITY));
                     if std::mem::take(&mut st.focus) {
                         resp.request_focus();
                     }

@@ -101,6 +101,7 @@ impl RefeditM {
         s.refedit_levels.clear();
         let nested: Vec<String> = self.picked.as_ref().map(|(_, c)| c.iter().take(depth).map(|(h, _)| h.hex()).collect()).unwrap_or_default();
         let r = run_refedit(s, &json!({ "handle": h.hex(), "nested": nested }))?;
+        s.set_selection(Vec::new());
         if let Some(b) = r.get("block").and_then(Value::as_str) {
             s.echo(format!("Editing \"{b}\" in place. REFCLOSE saves or discards the changes."));
         }
@@ -118,7 +119,7 @@ impl Interactive for RefeditM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match &self.picked {
-            None => Prompt::new("Select reference", Accept::POINT),
+            None => Prompt::new("Select reference", Accept::SELECT),
             Some((_, chain)) => {
                 let keys: Vec<String> = (1..=chain.len() + 1).map(|n| n.to_string()).collect();
                 let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
@@ -130,9 +131,12 @@ impl Interactive for RefeditM {
         if let Some((h, chain)) = self.picked.clone() {
             let level = match i {
                 Input::Enter => 1,
-                Input::Keyword(t) | Input::Text(t) => t.trim().parse::<usize>().ok().filter(|n| (1..=chain.len() + 1).contains(n)).ok_or_else(|| {
-                    crate::EngineError::Other(format!("Enter a level from 1 to {}.", chain.len() + 1))
-                })?,
+                Input::Keyword(t) | Input::Text(t) => t
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=chain.len() + 1).contains(n))
+                    .ok_or_else(|| crate::EngineError::Other(format!("Enter a level from 1 to {}.", chain.len() + 1)))?,
                 Input::Cancel => {
                     s.refedit_levels.clear();
                     return Ok(Step::Done);
@@ -161,6 +165,14 @@ impl Interactive for RefeditM {
                 s.refedit_levels = std::iter::once(outer).chain(chain.iter().map(|(_, n)| n.clone())).collect();
                 self.picked = Some((h, chain));
                 Ok(Step::Continue)
+            }
+            // A reference chosen by selection (not a pick point) is edited at its own level.
+            Input::Pick(hs) => {
+                let h = hs
+                    .into_iter()
+                    .find(|h| s.doc().ok().and_then(|d| d.entity(*h)).is_some_and(|e| matches!(e.kind, cadcraft_doc::EntityKind::Insert(_))))
+                    .ok_or_else(|| crate::EngineError::Other("Select a block reference.".into()))?;
+                self.run(s, h, 0)
             }
             Input::Enter | Input::Cancel => Ok(Step::Done),
             _ => Ok(Step::Continue),

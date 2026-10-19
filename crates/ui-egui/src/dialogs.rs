@@ -484,12 +484,9 @@ fn reference_edit(app: &mut CadApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let mut answer: Option<Option<usize>> = None;
     let mut keep = true;
-    egui::Window::new(crate::tl!("Reference Edit"))
-        .id(egui::Id::new("Reference Edit"))
-        .open(&mut keep)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
+    egui::Window::new(crate::tl!("Reference Edit")).id(egui::Id::new("Reference Edit")).open(&mut keep).collapsible(false).resizable(false).show(
+        ctx,
+        |ui| {
             ui.label(RichText::new(crate::tl!("Reference name:")).color(t.text_dim));
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_min_width(260.0);
@@ -517,7 +514,8 @@ fn reference_edit(app: &mut CadApp, ctx: &egui::Context) {
                     answer = Some(Some(sel));
                 }
             });
-        });
+        },
+    );
     if !keep {
         answer = Some(None);
     }

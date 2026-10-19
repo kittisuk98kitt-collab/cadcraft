@@ -414,7 +414,6 @@ fn unsupported(version: &str) -> String {
     format!("DWG version `{version}` can't be written (CADCraft writes {})", list.join(", "))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
