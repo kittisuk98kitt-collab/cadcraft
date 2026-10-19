@@ -327,6 +327,12 @@ fn about(ctx: &egui::Context, open: &mut bool) {
                 _ => {
                     ui.heading(crate::tl!("CADCraft"));
                     ui.label(crate::tf!("Version {version}", version = env!("CARGO_PKG_VERSION")));
+                    // This build's own edition and developer (a personal fork; names are not translated).
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Kitt Edition").strong().color(t.accent));
+                    ui.label("Customized and developed by Kittisuk Khanthon (Kitt)");
+                    ui.hyperlink_to("github.com/kittisuk98kitt-collab/cadcraft", "https://github.com/kittisuk98kitt-collab/cadcraft");
+                    ui.add_space(6.0);
                     ui.label(crate::tl!("Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust."));
                     ui.add_space(6.0);
                     ui.label(RichText::new(crate::tl!("One of the Crafting Apps by the ArtCraft team and community.")).color(t.text_dim));
