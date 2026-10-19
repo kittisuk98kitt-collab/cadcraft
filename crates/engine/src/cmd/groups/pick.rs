@@ -22,12 +22,34 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// PICKSTYLE 2 (Associative Hatch): a picked associative hatch brings its boundary objects.
+fn with_hatch_boundaries(s: &Session, hs: Vec<Handle>) -> Vec<Handle> {
+    if s.settings.pickstyle & 2 == 0 || hs.is_empty() || s.running.as_ref().is_some_and(|r| MEMBER_PICKS.contains(&r.id.as_str())) {
+        return hs;
+    }
+    let Ok(d) = s.doc() else { return hs };
+    let Some(store) = d.space(&s.space()) else { return hs };
+    let mut seen: HashSet<Handle> = hs.iter().copied().collect();
+    let mut out = hs.clone();
+    for h in &hs {
+        if let Some(cadcraft_doc::EntityKind::Hatch(hatch)) = store.get(*h).map(|e| &e.kind) {
+            for b in hatch.loops.iter().flat_map(|l| &l.sources) {
+                if store.get(*b).is_some_and(|e| d.is_visible(e)) && seen.insert(*b) {
+                    out.push(*b);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The commands whose object prompts pick single members, not whole groups.
 const MEMBER_PICKS: &[&str] = &["groupedit", "-group"];
 
 /// `hs` plus the other members of the selectable groups they belong to (in the space being
 /// edited, visible), when PICKSTYLE has group selection on. Order: `hs` first.
 pub(crate) fn expand(s: &Session, hs: Vec<Handle>) -> Vec<Handle> {
+    let hs = with_hatch_boundaries(s, hs);
     if s.settings.pickstyle & 1 == 0 || hs.is_empty() || s.running.as_ref().is_some_and(|r| MEMBER_PICKS.contains(&r.id.as_str())) {
         return hs;
     }

@@ -21,6 +21,9 @@
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
 //! | `selectionColor` | the colour selected objects are highlighted in: `"#rrggbb"`, or `null` for the theme's |
 //! | `snapMarkerSize` | object snap marker size in points, 5–31 |
+//! | `doubleClickEdit` | double-clicking an object edits it (DBLCLKEDIT) |
+//! | `autosnapMarker` | show the object snap marker |
+//! | `apertureBox` | show the object snap aperture box at the crosshair |
 //!
 //! SAVETIME and SAVEFILEPATH are the engine's autosave settings, kept with the autosave state
 //! rather than in the profile.
@@ -69,6 +72,12 @@ pub struct UiOptions {
     /// With no command running, a quick right-click is Enter too (it repeats the last command);
     /// a held one still opens the shortcut menu. Needs the time-sensitive right-click.
     pub right_click_repeat: bool,
+    /// Double-clicking an object edits it (DBLCLKEDIT).
+    pub double_click_edit: bool,
+    /// The object snap marker shows at a snap (AUTOSNAP 1).
+    pub autosnap_marker: bool,
+    /// The object snap aperture shows as a box at the crosshair while a command runs (APBOX).
+    pub aperture_box: bool,
 }
 
 impl Default for UiOptions {
@@ -80,6 +89,9 @@ impl Default for UiOptions {
             selection_color: None,
             time_sensitive_right_click: true,
             right_click_repeat: false,
+            double_click_edit: true,
+            autosnap_marker: true,
+            aperture_box: false,
         }
     }
 }
@@ -146,6 +158,9 @@ struct UiChanges {
     savefilepath: Option<String>,
     time_sensitive_right_click: Option<bool>,
     right_click_repeat: Option<bool>,
+    double_click_edit: Option<bool>,
+    autosnap_marker: Option<bool>,
+    aperture_box: Option<bool>,
 }
 
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
@@ -185,6 +200,9 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
         }
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
         "rightClickRepeat" => c.right_click_repeat = Some(v.as_bool().ok_or("rightClickRepeat must be true or false")?),
+        "doubleClickEdit" => c.double_click_edit = Some(v.as_bool().ok_or("doubleClickEdit must be true or false")?),
+        "autosnapMarker" => c.autosnap_marker = Some(v.as_bool().ok_or("autosnapMarker must be true or false")?),
+        "apertureBox" => c.aperture_box = Some(v.as_bool().ok_or("apertureBox must be true or false")?),
         k if k.eq_ignore_ascii_case("SAVETIME") => {
             let max = cadcraft_engine::autosave::MAX_SAVETIME;
             let n = v
@@ -221,6 +239,9 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("SAVEFILEPATH".into(), json!(cadcraft_engine::autosave::savefilepath()));
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
     m.insert("rightClickRepeat".into(), json!(o.right_click_repeat));
+    m.insert("doubleClickEdit".into(), json!(o.double_click_edit));
+    m.insert("autosnapMarker".into(), json!(o.autosnap_marker));
+    m.insert("apertureBox".into(), json!(o.aperture_box));
     m
 }
 
@@ -294,6 +315,15 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.right_click_repeat {
         app.options.right_click_repeat = b;
     }
+    if let Some(b) = ui.double_click_edit {
+        app.options.double_click_edit = b;
+    }
+    if let Some(b) = ui.autosnap_marker {
+        app.options.autosnap_marker = b;
+    }
+    if let Some(b) = ui.aperture_box {
+        app.options.aperture_box = b;
+    }
     Ok(report(app))
 }
 
@@ -325,6 +355,9 @@ impl CadApp {
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
             "rightClickRepeat": self.options.right_click_repeat,
+            "doubleClickEdit": self.options.double_click_edit,
+            "autosnapMarker": self.options.autosnap_marker,
+            "apertureBox": self.options.aperture_box,
         })
         .to_string()
     }
@@ -340,9 +373,18 @@ impl CadApp {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
         }
         let mut c = UiChanges::default();
-        for key in
-            ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick", "rightClickRepeat"]
-        {
+        for key in [
+            "systemCursor",
+            "modelBackground",
+            "paperBackground",
+            "selectionColor",
+            "snapMarkerSize",
+            "timeSensitiveRightClick",
+            "rightClickRepeat",
+            "doubleClickEdit",
+            "autosnapMarker",
+            "apertureBox",
+        ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
             }
@@ -368,6 +410,15 @@ impl CadApp {
         }
         if let Some(b) = c.right_click_repeat {
             self.options.right_click_repeat = b;
+        }
+        if let Some(b) = c.double_click_edit {
+            self.options.double_click_edit = b;
+        }
+        if let Some(b) = c.autosnap_marker {
+            self.options.autosnap_marker = b;
+        }
+        if let Some(b) = c.aperture_box {
+            self.options.aperture_box = b;
         }
     }
 }

@@ -145,7 +145,7 @@ fn run_tolerance(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// TOLERANCE at the command line: characteristic, two tolerance values, up to three datums,
 /// then the location.
-struct ToleranceM {
+pub(crate) struct ToleranceM {
     step: usize,
     line: GdtLine,
     style: String,
@@ -173,7 +173,29 @@ const SYMBOL_KW: &[&str] = &[
 const VALUE: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
 
 impl ToleranceM {
-    fn new(s: &Session) -> Self {
+    /// The frame is complete and its location is asked (QLEADER places it at the leader's end).
+    pub(crate) fn wants_location(&self) -> bool {
+        self.step == 6
+    }
+    /// Place the frame at a leader's end: its left edge there, or its right edge (`right` false).
+    pub(crate) fn place_at(&self, s: &mut Session, end: Vec2, right: bool) -> Result<Handle> {
+        let mut t = make(self.style.clone(), end, 0.0, self.text());
+        if !right {
+            let g = cadcraft_render::tolerance_in(s.doc()?, &t);
+            let max_x = g
+                .frame
+                .iter()
+                .filter_map(|p| if let GdtPrim::Line(v) = p { Some(v) } else { None })
+                .flatten()
+                .map(|q| q.x)
+                .fold(f64::NEG_INFINITY, f64::max);
+            if max_x.is_finite() {
+                t.insert.x -= max_x - end.x;
+            }
+        }
+        s.add_entity(EntityKind::Tolerance(t))
+    }
+    pub(crate) fn new(s: &Session) -> Self {
         ToleranceM { step: 0, line: GdtLine { symbol: Some(GdtSymbol::Position), ..Default::default() }, style: current_dimstyle(s) }
     }
     fn text(&self) -> String {

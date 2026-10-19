@@ -695,6 +695,17 @@ pub struct Leader {
     pub spline: bool,
     #[serde(default = "standard")]
     pub style: String,
+    /// Arrowhead of this leader in place of its dimension style's DIMLDRBLK (QLEADER's
+    /// Leader Settings); `None` follows the style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arrow_block: Option<String>,
+}
+impl Leader {
+    /// The leader's line as drawn: its vertices, or a smooth curve through them (spline).
+    pub fn path(&self) -> Vec<Vec2> {
+        let pts: Vec<Vec2> = self.vertices.iter().map(|v| v.xy()).collect();
+        if self.spline && pts.len() > 2 { GSpline::from_fit_points(&pts).tessellate(1e-3) } else { pts }
+    }
 }
 fn yes() -> bool {
     true
@@ -1154,7 +1165,7 @@ impl EntityKind {
                 (0..4).map(|i| Prim::Seg(Segment::Line(GLine::new(b[i], b[(i + 1) % 4])))).collect()
             }
             EntityKind::Leader(l) => {
-                l.vertices.windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(w.first()?.xy(), w.get(1)?.xy()))))).collect()
+                l.path().windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(*w.first()?, *w.get(1)?))))).collect()
             }
             EntityKind::Text(t) => vec![Prim::Point(t.insert.xy())],
             EntityKind::MText(t) => vec![Prim::Point(t.insert.xy())],

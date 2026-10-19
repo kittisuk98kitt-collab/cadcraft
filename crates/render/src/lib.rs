@@ -1215,14 +1215,15 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 }
                 _ => rgb,
             };
-            stroke_with(b, ctx, rgb, lw, lt.as_ref(), ltscale, &pts);
+            stroke_with(b, ctx, rgb, lw, lt.as_ref(), ltscale, &l.path());
             if l.arrow
                 && let (Some(a), Some(n)) = (pts.first(), pts.get(1))
             {
                 // DIMASZ × DIMSCALE of the leader's style (the drawing's DIMSCALE when it is 0).
                 let size = st.map(|s| s.arrow_size).unwrap_or(0.18) * leader_scale(ctx.d, st);
                 // DIMLDRBLK ("" = closed filled).
-                let kind = dim::Arrowhead::parse(st.map(|s| s.leader_arrow_block.as_str()).unwrap_or(""));
+                // The leader's own arrowhead (QLEADER settings) wins over the style's.
+                let kind = dim::Arrowhead::parse(l.arrow_block.as_deref().or(st.map(|s| s.leader_arrow_block.as_str())).unwrap_or(""));
                 let g = dim::arrowhead(kind, *a, (*a - *n).normalized(), size);
                 for l in &g.lines {
                     b.polyline(ctx, rgb, lw, l);

@@ -590,6 +590,89 @@ pub struct MLeaderOptions {
     pub block_center: bool,
 }
 
+/// One recorded step of an action macro (ACTRECORD … ACTSTOP; PLAY replays them).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum ActStep {
+    /// A command started (as typed: a name or an alias).
+    Start(String),
+    Point([f64; 2]),
+    Keyword(String),
+    Text(String),
+    /// Objects picked at a selection prompt, by handle.
+    Pick(Vec<String>),
+    Enter,
+    Cancel,
+}
+
+/// The most steps an action macro keeps.
+pub const MAX_ACT_STEPS: usize = 10_000;
+
+/// QLEADER's annotation (Leader Settings > Annotation > Annotation Type).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QAnnotation {
+    #[default]
+    Mtext,
+    Copy,
+    Tolerance,
+    Block,
+    None,
+}
+
+/// QLEADER's Annotation Reuse.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QReuse {
+    #[default]
+    None,
+    Next,
+    Current,
+}
+
+/// QLEADER's Leader Settings (its dialog's three tabs). Angle constraints: 0 any angle,
+/// -1 horizontal, otherwise the increment in degrees (90, 45, 30, 15).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct QLeaderSettings {
+    pub annotation: QAnnotation,
+    pub prompt_width: bool,
+    pub left_justify: bool,
+    pub frame: bool,
+    pub reuse: QReuse,
+    pub spline: bool,
+    /// Arrowhead name ("" = the dimension style's DIMLDRBLK, "None" = no arrowhead).
+    pub arrow: String,
+    /// Maximum leader points (0 = no limit).
+    pub max_points: u32,
+    pub angle1: i32,
+    pub angle2: i32,
+    /// Multi-line text attachment, 0 top of top line … 4 bottom of bottom line.
+    pub attach_left: u8,
+    pub attach_right: u8,
+    pub underline: bool,
+}
+
+impl Default for QLeaderSettings {
+    fn default() -> Self {
+        QLeaderSettings {
+            annotation: QAnnotation::Mtext,
+            prompt_width: true,
+            left_justify: false,
+            frame: false,
+            reuse: QReuse::None,
+            spline: false,
+            arrow: String::new(),
+            max_points: 3,
+            angle1: 0,
+            angle2: 0,
+            attach_left: 3,
+            attach_right: 1,
+            underline: false,
+        }
+    }
+}
+
 /// MLEADER's leader line type (Options > Leader type).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LeaderType {
@@ -656,6 +739,15 @@ pub struct Session {
     /// REFEDIT asking which nesting level to edit: the block names under the pick, outermost
     /// first (level 1). The UI shows them as the Reference Edit tree; empty otherwise.
     pub refedit_levels: Vec<String>,
+    /// QLEADER's Leader Settings; `qleader_dialog` asks the UI to show them (the Settings
+    /// option), `qleader_reuse` holds the annotation reused by Reuse Current.
+    pub qleader: QLeaderSettings,
+    pub qleader_dialog: bool,
+    pub qleader_reuse: Option<String>,
+    /// The Action Recorder: the steps recorded since ACTRECORD (`None`: not recording) and the
+    /// saved action macros by name.
+    pub recording: Option<Vec<ActStep>>,
+    pub actions: std::collections::BTreeMap<String, Vec<ActStep>>,
     pub clipboard: Vec<Entity>,
     pub clipboard_base: Vec2,
     pub pending_window: Option<PendingWindow>,
@@ -714,6 +806,11 @@ impl Session {
             tracking: snap::tracking::Tracker::default(),
             viewport_px: (1200.0, 800.0),
             refedit_levels: Vec::new(),
+            qleader: QLeaderSettings::default(),
+            qleader_dialog: false,
+            qleader_reuse: None,
+            recording: None,
+            actions: std::collections::BTreeMap::new(),
             clipboard: Vec::new(),
             clipboard_base: Vec2::ZERO,
             pending_window: None,
@@ -931,7 +1028,18 @@ impl Session {
     // ---------------- interactive commands ----------------
 
     /// Start a command by name or alias as if typed at the command line.
+    /// Add a step to the action being recorded (ACTRECORD), if any.
+    fn record(&mut self, step: impl FnOnce() -> Option<ActStep>) {
+        if let Some(r) = self.recording.as_mut()
+            && r.len() < MAX_ACT_STEPS
+            && let Some(st) = step()
+        {
+            r.push(st);
+        }
+    }
+
     pub fn start(&mut self, name: &str) -> Result<()> {
+        self.record(|| (!cmd::actions::not_recorded(name)).then(|| ActStep::Start(name.trim().to_string())));
         self.last_polar = None;
         let name = name.trim();
         let (transparent, name) = match name.strip_prefix('\'') {
@@ -1037,6 +1145,18 @@ impl Session {
     /// command (as in AutoCAD) and points do nothing. A LISP routine waiting in a `get…`
     /// function takes the input instead; one paused in `command` carries on after it.
     pub fn input(&mut self, input: Input) -> Result<()> {
+        if self.recording.is_some() && !self.running.as_ref().is_some_and(|r| cmd::actions::not_recorded(&r.id)) {
+            let step = match &input {
+                Input::Point(p) => Some(ActStep::Point([p.x, p.y])),
+                Input::Keyword(k) => Some(ActStep::Keyword(k.clone())),
+                Input::Text(t) => Some(ActStep::Text(t.clone())),
+                Input::Pick(hs) => Some(ActStep::Pick(hs.iter().map(|h| h.hex()).collect())),
+                Input::Enter => Some(ActStep::Enter),
+                Input::Cancel => Some(ActStep::Cancel),
+                Input::Deferred(_) => None,
+            };
+            self.record(|| step);
+        }
         if self.lisp_input(input.clone()) {
             return Ok(());
         }

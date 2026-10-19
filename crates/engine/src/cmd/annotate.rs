@@ -73,7 +73,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{points: [[arrow], ..., [landing]] ([location] with leaderType none), text?, leaderType?: straight|spline|none, block?: name, blockAttach?: center|insertion}")
             .interactive(|s| Ok(Box::new(MLeaderM::new(s)))),
         CommandSpec::new("leader", "Leader", run_leader)
-            .alias(&["lead", "le", "qleader"])
+            .alias(&["lead"])
             .params("{points: [[x,y]...], text?}")
             .interactive(|_| Ok(Box::new(LeaderM::default()))),
         CommandSpec::new("dimstyle.update", "Update", run_update)
@@ -544,56 +544,132 @@ impl Interactive for LeaderM {
     }
 }
 
-fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
+/// The text box of multiline text placed at a leader's end: where it goes, its attachment and
+/// its extents (for Frame text). `right`: the text lies to the right of the end.
+pub(super) struct LeaderText {
+    pub insert: Vec2,
+    pub attach: u8,
+    pub min: Vec2,
+    pub max: Vec2,
+}
+
+/// Lay out `lines` of height `h` after the leader end `end` (QLEADER's Attachment tab):
+/// `at` 0 top of top line, 1 middle of top line, 2 middle of the text, 3 middle of bottom line,
+/// 4 bottom of bottom line.
+pub(super) fn leader_text_box(end: Vec2, right: bool, at: u8, lines: &[String], h: f64, gap: f64, width: f64, left_justify: bool) -> LeaderText {
+    let n = lines.len().max(1) as f64;
+    let w = if width > 0.0 { width } else { lines.iter().map(|l| cadcraft_fonts::line_width(l, h, 1.0)).fold(0.0, f64::max) };
+    let total = h + (n - 1.0) * h * 5.0 / 3.0;
+    // Top of the text box.
+    let top = match at {
+        0 => end.y,
+        1 => end.y + h / 2.0,
+        2 => end.y + total / 2.0,
+        3 => end.y - h / 2.0 + total,
+        _ => end.y + total,
+    };
+    let (x0, x1) = if right { (end.x + gap, end.x + gap + w) } else { (end.x - gap - w, end.x - gap) };
+    let row = match at {
+        0 | 1 => 0,
+        2 => 1,
+        _ => 2,
+    };
+    let (col, x) = if right || left_justify { (1, x0) } else { (3, x1) };
+    let y = match row {
+        0 => top,
+        1 => top - total / 2.0,
+        _ => top - total,
+    };
+    LeaderText { insert: Vec2::new(x, y), attach: (row * 3 + col) as u8, min: Vec2::new(x0, top - total), max: Vec2::new(x1, top) }
+}
+
+pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     let mut pts = points_param(p, "points").ok_or_else(|| bad("leader", "`points` is required"))?;
     if pts.len() < 2 {
         return Err(bad("leader", "need 2+ points"));
     }
+    let def = crate::QLeaderSettings::default();
+    let flag = |k: &str, d: bool| p.get(k).and_then(Value::as_bool).unwrap_or(d);
+    let small = |k: &str, d: u8| p.get(k).and_then(Value::as_u64).map_or(d, |v| v.min(4) as u8);
     let st = style(s);
     // Everything the current dimension style gives a leader: arrow size, text height and gap
     // (times DIMSCALE), text style and colour.
     let ds = s.doc()?.dim_style(&st).cloned().unwrap_or_default();
     let k = if ds.scale > 0.0 { ds.scale } else { 1.0 };
-    let text = str_param(p, "text").map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
-    // With text, a sloped last segment gets a horizontal landing (one arrow size long), as
-    // QLEADER draws it; the text sits after it.
+    // Lines of text: "\P" or new lines separate them.
+    let lines: Vec<String> = match p.get("text") {
+        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+        Some(Value::String(t)) => t.replace("\\P", "\n").lines().map(str::to_string).collect(),
+        _ => Vec::new(),
+    };
+    let lines: Vec<String> = {
+        let mut v = lines;
+        while v.last().is_some_and(|l| l.trim().is_empty()) {
+            v.pop();
+        }
+        v
+    };
+    // An annotation follows (text here, or a tolerance, block or copy placed by QLEADER).
+    let annotated = !lines.is_empty() || flag("annotated", false);
+    // With an annotation, a sloped last segment gets a horizontal landing (one arrow size long),
+    // as QLEADER draws it; the annotation sits after it.
     let n = pts.len();
-    let dir = if pts[n - 1].x >= pts[n - 2].x { 1.0 } else { -1.0 };
-    if text.is_some() && (pts[n - 1].y - pts[n - 2].y).abs() > 1e-9 {
+    let right = pts[n - 1].x >= pts[n - 2].x;
+    let dir = if right { 1.0 } else { -1.0 };
+    if annotated && (pts[n - 1].y - pts[n - 2].y).abs() > 1e-9 {
         let end = pts[n - 1] + Vec2::new(dir * ds.arrow_size * k, 0.0);
         pts.push(end);
     }
+    let arrow_name = p.get("arrow").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let no_arrow = arrow_name.eq_ignore_ascii_case("none");
     let h = s.add_entity(EntityKind::Leader(cadcraft_doc::Leader {
         vertices: pts.iter().map(|q| v3(*q)).collect(),
-        arrow: true,
-        spline: false,
+        arrow: !no_arrow,
+        spline: flag("spline", def.spline),
         style: st,
+        arrow_block: (!arrow_name.is_empty() && !no_arrow && !arrow_name.eq_ignore_ascii_case(&ds.leader_arrow_block)).then_some(arrow_name),
     }))?;
     let mut out = vec![h.hex()];
-    if let (Some(t), Some(last)) = (text, pts.last()) {
-        let th = ds.text_height * k;
-        let gap = ds.text_gap.abs() * k;
+    let end = pts.last().copied().unwrap_or_default();
+    let th = ds.text_height * k;
+    let gap = ds.text_gap.abs() * k;
+    if !lines.is_empty() {
+        let width = p.get("width").and_then(Value::as_f64).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(0.0);
+        let at = if right { small("attachRight", def.attach_right) } else { small("attachLeft", def.attach_left) };
+        let bx = leader_text_box(end, right, at, &lines, th, gap, width, flag("leftJustify", def.left_justify));
+        let mut ls = lines.clone();
+        if flag("underline", def.underline)
+            && let Some(l) = ls.last_mut()
+        {
+            *l = format!("\\L{l}\\l");
+        }
         let style = if s.doc()?.text_style(&ds.text_style).is_some() { ds.text_style.clone() } else { "Standard".into() };
         let th_h = s.add_entity(EntityKind::MText(MText {
-            insert: v3(*last + Vec2::new(dir * gap, 0.0)),
+            insert: v3(bx.insert),
             height: th,
-            width: 0.0,
-            // Middle left after a landing to the right, middle right after one to the left.
-            attach: if dir > 0.0 { 4 } else { 6 },
+            width,
+            attach: bx.attach,
             rotation: 0.0,
             style,
-            contents: t,
+            contents: ls.join("\\P"),
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
         }))?;
+        let mut made = vec![th_h];
+        if flag("frame", def.frame) {
+            let (a, b) = (bx.min - Vec2::new(gap, gap), bx.max + Vec2::new(gap, gap));
+            made.push(s.add_entity(super::helpers::lwpoly(super::helpers::rect_vertices(a, b), true))?);
+        }
         if !matches!(ds.text_color, cadcraft_doc::color::Color::ByBlock) {
             let c = ds.text_color;
-            s.doc_mut()?.modify_entity(th_h, |e| e.common.color = c).map_err(|e| bad("leader", e.to_string()))?;
+            for m in &made {
+                s.doc_mut()?.modify_entity(*m, |e| e.common.color = c).map_err(|e| bad("leader", e.to_string()))?;
+            }
         }
-        out.push(th_h.hex());
+        out.extend(made.iter().map(|m| m.hex()));
     }
-    Ok(json!({ "handles": out }))
+    Ok(json!({ "handles": out, "end": [end.x, end.y], "right": right, "gap": gap, "height": th }))
 }
 
 fn run_update(s: &mut Session, p: &Value) -> Result<Value> {

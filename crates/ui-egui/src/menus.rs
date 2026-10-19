@@ -214,6 +214,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             toggle(&mut app.ui.show_toolbar, params);
             Ok(Value::Null)
         }
+        // TOOLPALETTES (Ctrl+3): the Tool Sets palette, CADCraft's tool palettes.
+        "toolpalettes" | "tp" => return Some(crate::docking::command(app, false, &json!({"operation":"open", "panel":"toolSets"}))),
+        "toolpalettesclose" => {
+            app.ui.show_toolsets = false;
+            Ok(Value::Null)
+        }
         "ui.toggle.filetabs" => {
             toggle(&mut app.ui.show_file_tabs, params);
             Ok(Value::Null)

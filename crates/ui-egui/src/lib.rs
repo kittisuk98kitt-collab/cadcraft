@@ -24,6 +24,7 @@ pub mod docking;
 pub mod eattedit;
 pub mod hatchdlg;
 mod mtext_editor;
+pub mod qleaderdlg;
 pub mod spacemouse;
 // The External References palette.
 pub mod xrefs;
@@ -387,6 +388,12 @@ impl CadApp {
         if !self.ui.status_hidden.is_empty() {
             prefs["statusHidden"] = json!(self.ui.status_hidden);
         }
+        if !self.session.actions.is_empty() {
+            prefs["actions"] = json!(self.session.actions);
+        }
+        if self.session.qleader != cadcraft_engine::QLeaderSettings::default() {
+            prefs["qleader"] = json!(self.session.qleader);
+        }
         prefs.to_string()
     }
 
@@ -416,6 +423,21 @@ impl CadApp {
         }
         if let Some(items) = v.get("statusHidden").and_then(Value::as_array) {
             self.ui.status_hidden = items.iter().filter_map(Value::as_str).take(64).map(str::to_string).collect();
+        }
+        if let Some(a) =
+            v.get("actions").and_then(|a| serde_json::from_value::<std::collections::BTreeMap<String, Vec<cadcraft_engine::ActStep>>>(a.clone()).ok())
+        {
+            self.session.actions = a
+                .into_iter()
+                .take(256)
+                .map(|(k, mut v)| {
+                    v.truncate(cadcraft_engine::MAX_ACT_STEPS);
+                    (k, v)
+                })
+                .collect();
+        }
+        if let Some(q) = v.get("qleader").and_then(|q| serde_json::from_value::<cadcraft_engine::QLeaderSettings>(q.clone()).ok()) {
+            self.session.qleader = q;
         }
     }
 

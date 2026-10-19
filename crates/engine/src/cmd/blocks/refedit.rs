@@ -75,7 +75,7 @@ fn nested_at(s: &Session, h: Handle, p: Vec2) -> Vec<(Handle, String)> {
             .filter(|e| matches!(e.kind, cadcraft_doc::EntityKind::Insert(_)))
             .filter_map(|e| {
                 let b = cadcraft_doc::entity_bounds(d, e, 0);
-                (!b.is_empty() && b.expand(tol).contains(lp)).then(|| (e, (b.max.x - b.min.x) * (b.max.y - b.min.y)))
+                (!b.is_empty() && b.expand(tol).contains(lp)).then_some((e, (b.max.x - b.min.x) * (b.max.y - b.min.y)))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(e, _)| e.clone());

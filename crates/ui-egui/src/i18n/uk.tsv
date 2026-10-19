@@ -1373,3 +1373,127 @@
 	Precision	Точність
 	Customization	Налаштування
 	Coordinates	Координати
+# QLEADER Leader Settings.
+	Always left justify	Завжди вирівнювати ліворуч
+	Angle Constraints	Обмеження кута
+	Annotation	Анотація
+	Annotation Reuse	Повторне використання анотації
+	Annotation Type	Тип анотації
+	Arrowhead	Стрілка
+	Attachment	Прикріплення
+	Copy an Object	Копія об'єкта
+	First Segment:	Перший сегмент:
+	Frame text	Текст у рамці
+	Leader Line	Лінія виноски
+	Leader Line & Arrow	Лінія виноски і стрілка
+	Leader Settings	Параметри виноски
+	MText options:	Параметри багаторядкового тексту:
+	Maximum	Максимум
+	Multi-line Text Attachment	Прикріплення багаторядкового тексту
+	No Limit	Без обмежень
+	Number of Points	Кількість точок
+	Prompt for width	Запитувати ширину
+	Reuse Current	Повторити поточну
+	Reuse Next	Повторити наступну
+	Second Segment:	Другий сегмент:
+	Straight	Пряма
+	Text on left side	Текст ліворуч
+	Text on right side	Текст праворуч
+	Tolerance	Допуск
+	Underline bottom line	Підкреслити нижній рядок
+	Closed filled	Замкнена зафарбована
+	Closed blank	Замкнена порожня
+	Dot	Точка
+	Dot small	Мала точка
+	Dot blank	Порожня точка
+	Architectural tick	Архітектурна засічка
+	Origin indicator	Покажчик початку
+	Right angle	Прямий кут
+	Open 30	Відкрита 30
+	Datum triangle	Базовий трикутник
+	Datum triangle filled	Базовий трикутник зафарбований
+	Integral	Інтеграл
+	Any angle	Будь-який кут
+	Top of top line	Верх верхнього рядка
+	Middle of top line	Середина верхнього рядка
+	Middle of multi-line text	Середина багаторядкового тексту
+	Middle of bottom line	Середина нижнього рядка
+	Bottom of bottom line	Низ нижнього рядка
+# Options dialog, AutoCAD layout.
+	Files	Файли
+	Plot and Publish	Друк і публікація
+	System	Система
+	3D Modeling	3D-моделювання
+	Current profile:	Поточний профіль:
+	Current drawing:	Поточне креслення:
+	Window Elements	Елементи вікна
+	Color theme:	Колірна тема:
+	Animation effects:	Анімаційні ефекти:
+	Display File Tabs	Показувати вкладки файлів
+	Display status bar	Показувати рядок стану
+	Display menu bar	Показувати рядок меню
+	Display toolbar	Показувати панель інструментів
+	Display command line	Показувати командний рядок
+	Command line history lines	Рядків історії командного рядка
+	Colors	Кольори
+	Display resolution	Роздільність відображення
+	Segments in a polyline curve	Сегментів у кривій полілінії
+	Display performance	Продуктивність відображення
+	Display lineweight	Показувати товщину ліній
+	Search paths, file names, and file locations:	Шляхи пошуку, імена та розташування файлів:
+	Automatic Save File Location	Розташування файлів автозбереження
+	Default Template File Name for QNEW	Шаблон за замовчуванням для QNEW
+	File Save	Збереження файлів
+	Save as:	Зберігати як:
+	File Safety Precautions	Захист файлів
+	Automatic save	Автоматичне збереження
+	Minutes between saves	Хвилин між збереженнями
+	File Open	Відкриття файлів
+	Number of recently-used files	Кількість останніх файлів
+	Default plot settings for new drawings	Параметри друку для нових креслень
+	General plot options	Загальні параметри друку
+	Plot Style Table Settings...	Параметри таблиць стилів друку...
+	General Options	Загальні параметри
+	Arrays	Масиви
+	Largest array (objects)	Найбільший масив (об'єктів)
+	AutoSnap Settings	Параметри автоприв'язки
+	Marker	Маркер
+	Display AutoSnap aperture box	Показувати приціл автоприв'язки
+	AutoSnap Marker Size	Розмір маркера автоприв'язки
+	Object Snap Options	Параметри об'єктної прив'язки
+	Ignore hatch objects	Ігнорувати штрихування
+	Aperture Size	Розмір прицілу
+	Display ViewCube or UCS Icon	Показ ViewCube або знака ПСК
+	Display the ViewCube	Показувати ViewCube
+	Display the UCS Icon	Показувати знак ПСК
+	Noun/verb selection	Спочатку вибір, потім команда
+	Use Shift to add to selection	Додавати до вибору з Shift
+	Associative Hatch	Асоціативне штрихування
+	Windows Standard Behavior	Стандартна поведінка Windows
+	Double click editing	Редагування подвійним клацанням
+	Right-click Customization...	Налаштування правої кнопки...
+	Mouse wheel	Коліщатко миші
+	Associative Dimensioning	Асоціативні розміри
+	Make new dimensions associative	Робити нові розміри асоціативними
+	Right-Click Customization	Налаштування правої кнопки
+	Turn on time-sensitive right-click	Увімкнути праву кнопку з урахуванням часу
+	Quick click for Enter; longer click to display the shortcut menu.	Швидке клацання — Enter; довше — контекстне меню.
+	Default Mode	Режим за замовчуванням
+	If no objects are selected, right-click means	Якщо нічого не вибрано, права кнопка означає
+	Repeat Last Command	Повторити останню команду
+	Shortcut Menu	Контекстне меню
+	Command Mode	Режим команди
+	If a command is in progress, right-click means	Якщо виконується команда, права кнопка означає
+	ENTER	ВВЕДЕННЯ
+	Apply & Close	Застосувати й закрити
+	Quick Leader	Швидка виноска
+# Action Recorder and express tools.
+	Action Recorder	Записувач дій
+	CAD Standards	Стандарти САПР
+	Combine Text	Об'єднати текст
+	Delete Action Macro	Видалити макрос дій
+	Layer Translator	Перетворювач шарів
+	Play	Відтворити
+	Record	Записати
+	Replace Block	Замінити блок
+	Stop	Зупинити

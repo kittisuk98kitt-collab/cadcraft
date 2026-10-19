@@ -1379,9 +1379,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             return;
         }
     }
+    // Options > User Preferences > Double click editing (DBLCLKEDIT) turns the edits below off.
+    let dbl_edit = dbl_primary && app.options.double_click_edit;
     // Double-click text to edit it, as in AutoCAD: TEXTEDIT with that object already picked.
     if inside
-        && dbl_primary
+        && dbl_edit
         && app.session.running.is_none()
         && let Some(hp) = hover_pos
         && edit_text_at(app, xf.to_world(hp))
@@ -1393,7 +1395,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // used up: it must not also start a grip edit on the hatch's centre grip below.
     let mut hatch_dialog = false;
     if inside
-        && dbl_primary
+        && dbl_edit
         && app.session.running.is_none()
         && let Some(hp) = hover_pos
         && let Some(h) = hatch_at(app, xf.to_world(hp), scale)
@@ -1406,7 +1408,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // Double-click a block reference (no command running) to edit its attributes, or its block in
     // the Block Editor, as in AutoCAD. The click is used up like the hatch's.
     if inside
-        && dbl_primary
+        && dbl_edit
         && !hatch_dialog
         && app.session.running.is_none()
         && app.session.state().is_ok_and(|st| st.block_edit.is_none())
@@ -1853,7 +1855,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if app.canvas.cursor.is_some() {
         draw_tracking(&painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0);
     }
-    if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
+    if let (Some(hit), Some(_), true) = (app.canvas.snap, app.canvas.cursor, app.options.autosnap_marker) {
         draw_snap_marker(&painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, &tiles);
@@ -2060,6 +2062,10 @@ fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox
     }
     if let Some(pb) = pb {
         p.rect_stroke(Rect::from_center_size(at, vec2(pb * 2.0, pb * 2.0)), 0.0, st, egui::StrokeKind::Middle);
+    } else if app.options.aperture_box && app.session.running.is_some() {
+        // Options > Drafting > Display AutoSnap aperture box (APBOX): the object snap aperture.
+        let a = (app.session.settings.aperture as f32).clamp(1.0, 50.0);
+        p.rect_stroke(Rect::from_center_size(at, vec2(a * 2.0, a * 2.0)), 0.0, st, egui::StrokeKind::Middle);
     }
 }
 

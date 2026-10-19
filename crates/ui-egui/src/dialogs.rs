@@ -12,6 +12,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
     reference_edit(app, ctx);
+    crate::qleaderdlg::show(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
     let mut open = true;
     match d.as_str() {
@@ -29,6 +30,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "blocks" => blocks(app, ctx, &mut open),
         "bedit" => crate::bedit::dialog(app, ctx, &mut open),
         "eattedit" => crate::eattedit::dialog(app, ctx, &mut open),
+        // Drawn by `qleaderdlg::show` above.
+        "qleader" => {}
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
@@ -420,55 +423,6 @@ fn language(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     });
 }
 
-#[cfg(test)]
-mod tests {
-    use cadcraft_engine::doc::EntityKind;
-    use cadcraft_engine::geom::Vec2;
-    use cadcraft_engine::{Input, Session};
-    use serde_json::json;
-
-    use crate::{CadApp, Services};
-
-    #[test]
-    fn picking_a_block_starts_insert_with_its_name() {
-        let mut app = CadApp::new(Session::new(), Services::default());
-        let c = app.session.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
-        let h = c["handle"].as_str().unwrap().to_string();
-        app.session.execute("block", &json!({"name": "Door 2", "base": [0, 0], "handles": [h], "keep": "delete"})).unwrap();
-        // A command already running is replaced, as when a command is typed.
-        app.start("line");
-
-        super::insert_block(&mut app, "Door 2");
-        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
-        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Specify insertion point".to_string()));
-
-        app.session.input(Input::Point(Vec2::new(5.0, 6.0))).unwrap();
-        // X scale, Y scale and rotation take their defaults.
-        for _ in 0..3 {
-            app.session.input(Input::Enter).unwrap();
-        }
-        assert!(app.session.running.is_none());
-        let d = app.session.doc().unwrap();
-        let mut ins = Vec::new();
-        for e in d.model.iter() {
-            if let EntityKind::Insert(i) = &e.kind {
-                ins.push(i.clone());
-            }
-        }
-        assert_eq!(ins.len(), 1);
-        assert_eq!(ins[0].block, "Door 2");
-        assert!((ins[0].insert.x - 5.0).abs() < 1e-9 && (ins[0].insert.y - 6.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn picking_a_missing_block_keeps_asking_for_a_name() {
-        let mut app = CadApp::new(Session::new(), Services::default());
-        super::insert_block(&mut app, "Nope");
-        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
-        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter block name".to_string()));
-    }
-}
-
 /// REFEDIT's Reference Edit dialog: when the pick lies on references nested in the picked one,
 /// the nesting as a tree (outermost first) to choose the reference to edit. OK answers the
 /// command's level prompt; the command line takes a typed level too.
@@ -531,5 +485,54 @@ fn reference_edit(app: &mut CadApp, ctx: &egui::Context) {
             app.session.refedit_levels.clear();
         }
         None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cadcraft_engine::doc::EntityKind;
+    use cadcraft_engine::geom::Vec2;
+    use cadcraft_engine::{Input, Session};
+    use serde_json::json;
+
+    use crate::{CadApp, Services};
+
+    #[test]
+    fn picking_a_block_starts_insert_with_its_name() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let c = app.session.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+        let h = c["handle"].as_str().unwrap().to_string();
+        app.session.execute("block", &json!({"name": "Door 2", "base": [0, 0], "handles": [h], "keep": "delete"})).unwrap();
+        // A command already running is replaced, as when a command is typed.
+        app.start("line");
+
+        super::insert_block(&mut app, "Door 2");
+        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
+        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Specify insertion point".to_string()));
+
+        app.session.input(Input::Point(Vec2::new(5.0, 6.0))).unwrap();
+        // X scale, Y scale and rotation take their defaults.
+        for _ in 0..3 {
+            app.session.input(Input::Enter).unwrap();
+        }
+        assert!(app.session.running.is_none());
+        let d = app.session.doc().unwrap();
+        let mut ins = Vec::new();
+        for e in d.model.iter() {
+            if let EntityKind::Insert(i) = &e.kind {
+                ins.push(i.clone());
+            }
+        }
+        assert_eq!(ins.len(), 1);
+        assert_eq!(ins[0].block, "Door 2");
+        assert!((ins[0].insert.x - 5.0).abs() < 1e-9 && (ins[0].insert.y - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn picking_a_missing_block_keeps_asking_for_a_name() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        super::insert_block(&mut app, "Nope");
+        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
+        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter block name".to_string()));
     }
 }
