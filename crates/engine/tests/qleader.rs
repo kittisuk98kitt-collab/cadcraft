@@ -426,3 +426,26 @@ fn xclip_typed_rectangle_and_invert() {
     assert!(list.verts.iter().any(|v| (v.len() - 10.0).abs() < 0.1));
     typed(&mut s, &["xclip", "p"]);
 }
+
+#[test]
+fn stack_properties_edit_a_tolerance() {
+    use cadcraft_engine::mtext_edit::Formatted;
+    let mut f = Formatted::from_contents("37.2\\S+0.2^+0.1;");
+    let i = 4;
+    let mut p = f.stack_props(i, 2.5).unwrap();
+    assert_eq!((p.upper.as_str(), p.lower.as_str(), p.sep, p.align), ("+0.2", "+0.1", '^', 1));
+    assert!((p.size - 0.7).abs() < 1e-9);
+    p.upper = "+0.3".into();
+    p.align = 0;
+    p.size = 0.5;
+    assert!(f.set_stack(i, &p));
+    let c = f.to_contents();
+    assert!(c.contains("\\A0;") && c.contains("\\S+0.3^+0.1;"), "{c}");
+    let g = Formatted::from_contents(&c);
+    let at = g.text().chars().position(|ch| g.atom_code(ch).is_some_and(|a| a.contains("\\S"))).unwrap();
+    let q = g.stack_props(at, 2.5).unwrap();
+    assert_eq!((q.upper.as_str(), q.align), ("+0.3", 0));
+    assert!((q.size - 0.5).abs() < 0.01, "{}", q.size);
+    assert!(f.unstack(i));
+    assert_eq!(f.text(), "37.2+0.3^+0.1");
+}

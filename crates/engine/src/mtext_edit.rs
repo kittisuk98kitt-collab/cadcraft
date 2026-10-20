@@ -99,12 +99,53 @@ impl Default for Formatted {
     }
 }
 
+/// The end (its `}`) of a group at `from` that holds only `\A`/`\H` codes and one stack.
+fn stack_group(chars: &[char], from: usize) -> Option<usize> {
+    let mut j = from + 1;
+    let mut stacked = false;
+    for _ in 0..8 {
+        match (chars.get(j), chars.get(j + 1)) {
+            (Some('\\'), Some('A' | 'H')) if !stacked => j = arg_end(chars, j + 2) + 1,
+            (Some('\\'), Some('S')) if !stacked => {
+                // The stack's own `;` (`\;` is an escaped one).
+                let mut k = j + 2;
+                while let Some(c) = chars.get(k) {
+                    match c {
+                        '\\' => k += 2,
+                        ';' => break,
+                        _ => k += 1,
+                    }
+                }
+                chars.get(k)?;
+                j = k + 1;
+                stacked = true;
+            }
+            (Some('}'), _) if stacked => return Some(j),
+            _ => return None,
+        }
+    }
+    None
+}
+
 fn arg_end(chars: &[char], from: usize) -> usize {
     let mut j = from;
     while chars.get(j).is_some_and(|c| *c != ';') {
         j += 1;
     }
     j
+}
+
+/// A stacked fraction or tolerance's properties (Stack Properties).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StackProps {
+    pub upper: String,
+    pub lower: String,
+    /// `^` tolerance, `/` horizontal fraction, `#` diagonal fraction.
+    pub sep: char,
+    /// Position: 0 bottom, 1 centre, 2 top (`\A`).
+    pub align: u8,
+    /// Text size as a fraction of the text height (0.7 by default).
+    pub size: f64,
 }
 
 impl Formatted {
@@ -122,6 +163,13 @@ impl Formatted {
                 break;
             }
             match c {
+                '{' if stack_group(&chars, i).is_some() => {
+                    // `{\A0;\H0.71x;\S+0.2^+0.1;}`: a stack with its own properties, one atom.
+                    let end = stack_group(&chars, i).unwrap_or(i);
+                    let code: String = chars.get(i..=end).unwrap_or_default().iter().collect();
+                    f.push_atom(code, &cur);
+                    i = end + 1;
+                }
                 '{' => {
                     if stack.len() < 64 {
                         stack.push(cur.clone());
@@ -310,8 +358,10 @@ impl Formatted {
     pub fn unstack(&mut self, i: usize) -> bool {
         let chars: Vec<char> = self.text.chars().collect();
         let Some(&c) = chars.get(i) else { return false };
-        let Some(body) =
-            self.atom_code(c).and_then(|code| code.strip_prefix("\\S")).map(|b| b.trim_end_matches(';').replace("\\;", ";").replace("\\\\", "\\"))
+        let Some(body) = self
+            .atom_code(c)
+            .and_then(|code| code.get(code.find("\\S")? + 2..))
+            .map(|b| b.trim_end_matches('}').trim_end_matches(';').replace("\\;", ";").replace("\\\\", "\\"))
         else {
             return false;
         };
@@ -336,6 +386,62 @@ impl Formatted {
         self.atoms.push(format!("\\S{esc};"));
         let new: String = chars.iter().take(r.start).chain(std::iter::once(&ch)).chain(chars.iter().skip(r.end)).collect();
         self.set_text(&new, &fmt)
+    }
+
+    /// The properties of the stack at character `i` (Stack Properties). `base_h`: the text's
+    /// height, for a stack whose size is set by the character's height.
+    pub fn stack_props(&self, i: usize, base_h: f64) -> Option<StackProps> {
+        let chars: Vec<char> = self.text.chars().collect();
+        let c = *chars.get(i)?;
+        let code = self.atom_code(c)?;
+        let s_at = code.find("\\S")?;
+        let body = code.get(s_at + 2..)?;
+        let end = body.find(';').unwrap_or(body.len());
+        let body = body.get(..end)?.replace("\\;", ";");
+        let (k, sep) = body.char_indices().find(|(_, ch)| matches!(ch, '^' | '/' | '#'))?;
+        let upper = body.get(..k)?.to_string();
+        let lower = body.get(k + 1..)?.to_string();
+        let num = |pre: &str| -> Option<f64> {
+            let at = code.find(pre)?;
+            let rest = code.get(at + pre.len()..)?;
+            rest.get(..rest.find(';')?)?.trim_end_matches(['x', 'X']).parse::<f64>().ok().filter(|v| v.is_finite())
+        };
+        let align = num("\\A")
+            .or_else(|| {
+                let prev = chars.get(i.checked_sub(1)?)?;
+                let pc = self.atom_code(*prev)?;
+                pc.strip_prefix("\\A")?.trim_end_matches(';').parse::<f64>().ok()
+            })
+            .map_or(1, |v| v.clamp(0.0, 2.0) as u8);
+        let size = match num("\\H") {
+            Some(k) => k * 0.7,
+            None => self.fmt_at(i).height.filter(|_| base_h > 0.0).map_or(0.7, |h| h / base_h * 0.7),
+        };
+        Some(StackProps { upper, lower, sep, align, size: size.clamp(0.25, 1.0) })
+    }
+
+    /// Give the stack at character `i` new properties. `false` when it isn't a stack.
+    pub fn set_stack(&mut self, i: usize, p: &StackProps) -> bool {
+        let chars: Vec<char> = self.text.chars().collect();
+        let Some(&c) = chars.get(i) else { return false };
+        if self.atom_code(c).is_none_or(|code| !code.contains("\\S")) {
+            return false;
+        }
+        let esc = |t: &str| -> String {
+            t.chars()
+                .filter(|c| !matches!(c, '^' | '/' | '#' | '\n'))
+                .map(|c| if matches!(c, '\\' | ';') { format!("\\{c}") } else { c.to_string() })
+                .collect()
+        };
+        let sep = if matches!(p.sep, '^' | '/' | '#') { p.sep } else { '^' };
+        let k = (p.size.clamp(0.25, 1.0) / 0.7 * 10_000.0).round() / 10_000.0;
+        let h = if (k - 1.0).abs() < 1e-9 { String::new() } else { format!("\\H{k}x;") };
+        let code = format!("{{\\A{};{h}\\S{}{sep}{};}}", p.align.min(2), esc(&p.upper), esc(&p.lower));
+        let idx = (c as u32 - ATOM_BASE) as usize;
+        let Some(slot) = self.atoms.get_mut(idx) else { return false };
+        *slot = code;
+        self.edit(i..i + 1, |f| f.height = None);
+        true
     }
 
     fn clamp(&self, r: std::ops::Range<usize>) -> std::ops::Range<usize> {

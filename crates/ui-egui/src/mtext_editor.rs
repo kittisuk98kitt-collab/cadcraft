@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use cadcraft_engine::mtext_edit::{CharFmt, Flag, Formatted, ListStyle, MTextColor, ParaAlign, TabKind};
+use cadcraft_engine::mtext_edit::{CharFmt, Flag, Formatted, ListStyle, MTextColor, ParaAlign, StackProps, TabKind};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use egui::{Align2, Color32, FontId, Rect, RichText, Sense, Shape, Stroke, TextFormat, pos2, vec2};
 
@@ -62,6 +62,8 @@ struct State {
     snap: Formatted,
     /// Whether the ruler is shown.
     no_ruler: bool,
+    /// Stack Properties open: the stack's character and the values being edited.
+    stack_edit: Option<(usize, StackProps)>,
 }
 
 fn state_id() -> egui::Id {
@@ -115,6 +117,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             redo: Vec::new(),
             snap,
             no_ruler: false,
+            stack_edit: None,
         }
     });
     // Undo history: each change since the last frame is one step.
@@ -154,7 +157,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             }
             st.top = ui.cursor().top() - y0;
             text_box(ui, &mut st, base_h, px, width, &t);
-            stacks_row(ui, &mut st, &t);
+            stacks_row(ui, &mut st, &t, base_h);
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
                 if ui.button(crate::tl!("OK")).clicked() {
@@ -168,7 +171,11 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             });
         });
     });
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    let stack_open = st.stack_edit.is_some();
+    stack_dialog(ctx, &mut st);
+    if stack_open {
+        // Esc closes Stack Properties, not the editor.
+    } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         done = Done::Cancel;
     } else if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
         done = Done::Ok;
@@ -567,30 +574,135 @@ fn replace_sel(st: &mut State, range: &std::ops::Range<usize>, s: &str) {
 }
 
 /// The stacked texts (tolerances, fractions) of the text, each with Unstack.
-fn stacks_row(ui: &mut egui::Ui, st: &mut State, t: &Tokens) {
+/// Stack Properties: the stack's upper and lower text, style, position and size.
+fn stack_dialog(ctx: &egui::Context, st: &mut State) {
+    let Some((i, mut p)) = st.stack_edit.take() else { return };
+    let mut answer: Option<bool> = None;
+    let mut keep = true;
+    egui::Window::new(crate::tl!("Stack Properties"))
+        .id(egui::Id::new("mtext_stack_props"))
+        .open(&mut keep)
+        .collapsible(false)
+        .resizable(false)
+        .order(egui::Order::Tooltip)
+        .default_width(320.0)
+        .show(ctx, |ui| {
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.group(|ui| {
+                        ui.label(crate::tl!("Text"));
+                        egui::Grid::new("stack_text").num_columns(2).show(ui, |ui| {
+                            ui.label(crate::tl!("Upper"));
+                            ui.add(egui::TextEdit::singleline(&mut p.upper).desired_width(140.0));
+                            ui.end_row();
+                            ui.label(crate::tl!("Lower"));
+                            ui.add(egui::TextEdit::singleline(&mut p.lower).desired_width(140.0));
+                            ui.end_row();
+                        });
+                    });
+                    ui.group(|ui| {
+                        ui.label(crate::tl!("Appearance"));
+                        egui::Grid::new("stack_look").num_columns(2).show(ui, |ui| {
+                            ui.label(crate::tl!("Style"));
+                            let styles = [
+                                ('^', crate::tl!("Tolerance")),
+                                ('/', crate::tl!("Fraction (Horizontal)")),
+                                ('#', crate::tl!("Fraction (Diagonal)")),
+                            ];
+                            let cur = styles.iter().find(|(c, _)| *c == p.sep).map_or(styles[0].1, |(_, l)| *l);
+                            egui::ComboBox::from_id_salt("stack_style").width(150.0).selected_text(cur).show_ui(ui, |ui| {
+                                for (c, l) in styles {
+                                    ui.selectable_value(&mut p.sep, c, l);
+                                }
+                            });
+                            ui.end_row();
+                            ui.label(crate::tl!("Position"));
+                            let pos = [(2u8, crate::tl!("Top")), (1, crate::tl!("Center")), (0, crate::tl!("Bottom"))];
+                            let cur = pos.iter().find(|(a, _)| *a == p.align).map_or(pos[1].1, |(_, l)| *l);
+                            egui::ComboBox::from_id_salt("stack_pos").width(150.0).selected_text(cur).show_ui(ui, |ui| {
+                                for (a, l) in pos {
+                                    ui.selectable_value(&mut p.align, a, l);
+                                }
+                            });
+                            ui.end_row();
+                            ui.label(crate::tl!("Text size"));
+                            let mut pct = (p.size * 100.0).round() as i32;
+                            egui::ComboBox::from_id_salt("stack_size").width(150.0).selected_text(format!("{pct}%")).show_ui(ui, |ui| {
+                                for v in [50, 60, 70, 80, 90, 100] {
+                                    ui.selectable_value(&mut pct, v, format!("{v}%"));
+                                }
+                            });
+                            p.size = f64::from(pct.clamp(25, 100)) / 100.0;
+                            ui.end_row();
+                        });
+                    });
+                });
+                ui.vertical(|ui| {
+                    if ui.add_sized([90.0, 24.0], egui::Button::new(crate::tl!("OK"))).clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.add_sized([90.0, 24.0], egui::Button::new(crate::tl!("Cancel"))).clicked() {
+                        answer = Some(false);
+                    }
+                    ui.add_space(8.0);
+                    if ui.add_sized([90.0, 24.0], egui::Button::new(crate::tl!("Defaults"))).clicked() {
+                        p.sep = '^';
+                        p.align = 1;
+                        p.size = 0.7;
+                    }
+                });
+            });
+        });
+    if !keep || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        answer = Some(false);
+    }
+    match answer {
+        Some(true) => {
+            st.fmt.set_stack(i, &p);
+            st.caret = Some(i + 1);
+        }
+        Some(false) => {}
+        None => st.stack_edit = Some((i, p)),
+    }
+}
+
+fn stacks_row(ui: &mut egui::Ui, st: &mut State, t: &Tokens, base_h: f64) {
     let stacks: Vec<(usize, String)> = st
         .fmt
         .text()
         .chars()
         .enumerate()
-        .filter_map(|(i, c)| st.fmt.atom_code(c).and_then(|code| code.strip_prefix("\\S")).map(|b| (i, b.trim_end_matches(';').to_string())))
+        .filter_map(|(i, c)| {
+            let code = st.fmt.atom_code(c)?;
+            let body = code.get(code.find("\\S")? + 2..)?;
+            Some((i, body.get(..body.find(';').unwrap_or(body.len()))?.to_string()))
+        })
         .collect();
     if stacks.is_empty() {
         return;
     }
     let mut unstack = None;
+    let mut props = None;
     ui.horizontal_wrapped(|ui| {
         ui.add_space(4.0);
         ui.label(RichText::new(crate::tl!("Stacked:")).small().color(t.text_dim));
         for (i, body) in &stacks {
             let shown = body.replacen(['^', '/', '#'], " / ", 1);
-            if ui.small_button(format!("{shown}  x")).on_hover_text(crate::tl!("Unstack")).clicked() {
+            if ui.small_button(shown.clone()).on_hover_text(crate::tl!("Stack Properties")).clicked() {
+                props = Some(*i);
+            }
+            if ui.small_button("x").on_hover_text(crate::tl!("Unstack")).clicked() {
                 unstack = Some(*i);
             }
         }
     });
     if let Some(i) = unstack {
         st.fmt.unstack(i);
+    }
+    if let Some(i) = props
+        && let Some(p) = st.fmt.stack_props(i, base_h)
+    {
+        st.stack_edit = Some((i, p));
     }
 }
 
