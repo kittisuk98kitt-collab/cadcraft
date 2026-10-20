@@ -332,3 +332,20 @@ fn textedit_offers_the_in_place_editor_and_takes_stacked_text() {
         _ => panic!("text"),
     }
 }
+
+#[test]
+fn mtext_strike_oblique_tracking_width_round_trip() {
+    use cadcraft_engine::mtext_edit::{Flag, Formatted};
+    let f = Formatted::from_contents("A\\K\\Q15;\\T1.5;\\W0.8;BC\\kD");
+    assert!(f.fmt_at(1).strike);
+    assert_eq!(f.fmt_at(1).oblique, Some(15.0));
+    assert_eq!(f.fmt_at(1).track, Some(1.5));
+    assert_eq!(f.fmt_at(1).width, Some(0.8));
+    assert!(!f.fmt_at(3).strike);
+    let back = Formatted::from_contents(&f.to_contents());
+    assert_eq!(back.text(), "ABCD");
+    assert_eq!(back.fmt_at(2), f.fmt_at(2));
+    let mut g = Formatted::from_contents("XYZ");
+    g.toggle(0..2, Flag::Strike);
+    assert!(g.to_contents().contains("\\K"));
+}

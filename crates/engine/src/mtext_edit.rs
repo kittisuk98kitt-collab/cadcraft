@@ -35,6 +35,14 @@ pub struct CharFmt {
     pub height: Option<f64>,
     /// Colour set inline (`\C`, `\c`); `None`: the entity's (ByLayer/ByBlock).
     pub color: Option<MTextColor>,
+    /// Strikethrough (`\K`).
+    pub strike: bool,
+    /// Oblique angle in degrees (`\Q`); `None`: the style's.
+    pub oblique: Option<f64>,
+    /// Tracking, the spacing between characters as a factor (`\T`); `None`: 1.
+    pub track: Option<f64>,
+    /// Width factor (`\W`); `None`: the style's.
+    pub width: Option<f64>,
 }
 
 /// A character format switch of the toolbar.
@@ -44,6 +52,7 @@ pub enum Flag {
     Italic,
     Underline,
     Overline,
+    Strike,
 }
 
 impl CharFmt {
@@ -53,6 +62,7 @@ impl CharFmt {
             Flag::Italic => self.italic,
             Flag::Underline => self.underline,
             Flag::Overline => self.overline,
+            Flag::Strike => self.strike,
         }
     }
 
@@ -62,6 +72,7 @@ impl CharFmt {
             Flag::Italic => self.italic = on,
             Flag::Underline => self.underline = on,
             Flag::Overline => self.overline = on,
+            Flag::Strike => self.strike = on,
         }
     }
 }
@@ -147,6 +158,19 @@ impl Formatted {
                         Some('l') => cur.underline = false,
                         Some('O') => cur.overline = true,
                         Some('o') => cur.overline = false,
+                        Some('K') => cur.strike = true,
+                        Some('k') => cur.strike = false,
+                        Some(k @ ('Q' | 'T' | 'W')) => {
+                            let end = arg_end(&chars, i);
+                            let a: String = chars.get(i..end).unwrap_or_default().iter().collect();
+                            i = end + 1;
+                            let v = a.trim().trim_end_matches(['x', 'X']).parse::<f64>().ok().filter(|v| v.is_finite());
+                            match k {
+                                'Q' => cur.oblique = v.filter(|v| v.abs() < 85.0),
+                                'T' => cur.track = v.filter(|v| (0.75..=4.0).contains(v)),
+                                _ => cur.width = v.filter(|v| *v > 0.01 && *v < 100.0),
+                            }
+                        }
                         Some(k @ ('f' | 'F' | 'H' | 'C' | 'c' | 'p')) => {
                             let end = arg_end(&chars, i);
                             let a: String = chars.get(i..end).unwrap_or_default().iter().collect();
@@ -481,6 +505,9 @@ impl Formatted {
         if f.overline {
             s.push_str("\\O");
         }
+        if f.strike {
+            s.push_str("\\K");
+        }
         if f.bold || f.italic || f.font.is_some() {
             let fam = f.font.clone().unwrap_or_else(|| self.base_font.clone());
             let fam: String = fam.chars().filter(|c| !matches!(c, ';' | '|' | '{' | '}' | '\\')).collect();
@@ -488,6 +515,15 @@ impl Formatted {
         }
         if let Some(h) = f.height {
             s.push_str(&format!("\\H{};", trim(h)));
+        }
+        if let Some(q) = f.oblique {
+            s.push_str(&format!("\\Q{};", trim(q)));
+        }
+        if let Some(t) = f.track {
+            s.push_str(&format!("\\T{};", trim(t)));
+        }
+        if let Some(w) = f.width {
+            s.push_str(&format!("\\W{};", trim(w)));
         }
         match f.color {
             Some(MTextColor::Aci(v)) => s.push_str(&format!("\\C{v};")),

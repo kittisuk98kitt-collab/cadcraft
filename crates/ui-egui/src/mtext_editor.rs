@@ -17,7 +17,24 @@ use crate::theme::Tokens;
 const MIN_PX: f32 = 13.0;
 const MAX_PX: f32 = 36.0;
 /// Families the font list offers besides the one set in the text.
-const FAMILIES: [&str; 6] = ["Arial", "Times New Roman", "Courier New", "Verdana", "Georgia", "Calibri"];
+const FAMILIES: [&str; 13] = [
+    "Arial",
+    "Times New Roman",
+    "Courier New",
+    "Verdana",
+    "Georgia",
+    "Calibri",
+    "Tahoma",
+    "MS Gothic",
+    "txt",
+    "simplex",
+    "romans",
+    "isocp",
+    "bigfont",
+];
+
+/// Format changes kept for the editor's Undo.
+const MAX_UNDO: usize = 100;
 /// The standard colours (ACI 1..=7) of the colour menu.
 const SWATCHES: [u16; 7] = [1, 2, 3, 4, 5, 6, 7];
 /// Ruler snap, in text heights.
@@ -38,6 +55,13 @@ struct State {
     caret: Option<usize>,
     /// Take the keyboard focus in the next frame (the editor just opened).
     focus: bool,
+    /// Earlier states for Undo, and undone ones for Redo.
+    undo: Vec<Formatted>,
+    redo: Vec<Formatted>,
+    /// The state Undo history last saw.
+    snap: Formatted,
+    /// Whether the ruler is shown.
+    no_ruler: bool,
 }
 
 fn state_id() -> egui::Id {
@@ -78,8 +102,32 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         }
         // Typing goes into the box at once, after the text being edited.
         let end = fmt.len();
-        State { fmt, typing: CharFmt::default(), typing_at: end, top: 70.0, sel: (end, end), caret: Some(end), focus: true }
+        let snap = fmt.clone();
+        State {
+            fmt,
+            typing: CharFmt::default(),
+            typing_at: end,
+            top: 70.0,
+            sel: (end, end),
+            caret: Some(end),
+            focus: true,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            snap,
+            no_ruler: false,
+        }
     });
+    // Undo history: each change since the last frame is one step.
+    if st.fmt != st.snap {
+        let prev = std::mem::replace(&mut st.snap, st.fmt.clone());
+        st.undo.push(prev);
+        if st.undo.len() > MAX_UNDO {
+            st.undo.remove(0);
+        }
+        st.redo.clear();
+    }
+    let styles: Vec<(String, String)> =
+        app.session.doc().map(|d| d.text_styles.iter().map(|s| (s.name.clone(), s.font.clone())).collect()).unwrap_or_default();
     let base_h = if mt.height > 0.0 { mt.height } else { 0.2 };
     let px = ((base_h * scale) as f32).clamp(MIN_PX, MAX_PX);
     let width = if mt.width > 0.0 { ((mt.width * scale) as f32).clamp(280.0, rect.width().max(280.0) * 0.9) } else { 380.0 };
@@ -99,8 +147,11 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.accent)).inner_margin(egui::Margin::same(0)).show(ui, |ui| {
             ui.set_width(width);
             let y0 = ui.cursor().top();
-            toolbar(ui, &mut st, base_h);
-            ruler(ui, &mut st, px, width, base_h);
+            toolbar(ui, &mut st, base_h, &mt.style, &styles);
+            format_row(ui, &mut st);
+            if !st.no_ruler {
+                ruler(ui, &mut st, px, width, base_h);
+            }
             st.top = ui.cursor().top() - y0;
             text_box(ui, &mut st, base_h, px, width, &t);
             stacks_row(ui, &mut st, &t);
@@ -181,6 +232,7 @@ fn flag_of(c: &CharFmt, f: Flag) -> bool {
         Flag::Italic => c.italic,
         Flag::Underline => c.underline,
         Flag::Overline => c.overline,
+        Flag::Strike => c.strike,
     }
 }
 
@@ -190,15 +242,43 @@ fn set_flag(c: &mut CharFmt, f: Flag, on: bool) {
         Flag::Italic => c.italic = on,
         Flag::Underline => c.underline = on,
         Flag::Overline => c.overline = on,
+        Flag::Strike => c.strike = on,
     }
 }
 
-fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
+/// A text style's font as a family name (`arial.ttf` → `arial`, `txt.shx` → `txt`).
+fn family_of(font: &str) -> String {
+    let f = font.trim();
+    let stem = f.rsplit(['/', '\\']).next().unwrap_or(f);
+    stem.rsplit_once('.').map_or(stem, |(a, _)| a).to_string()
+}
+
+fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64, style: &str, styles: &[(String, String)]) {
     let cur = current(st);
     let range = st.sel.0.min(st.sel.1)..st.sel.0.max(st.sel.1);
     let mut refocus = false;
     ui.horizontal_wrapped(|ui| {
         ui.add_space(4.0);
+        // Text style: its font for the whole text.
+        egui::ComboBox::from_id_salt("mtext_style")
+            .width(90.0)
+            .selected_text(style)
+            .show_ui(ui, |ui| {
+                for (name, font) in styles {
+                    if ui.selectable_label(name.eq_ignore_ascii_case(style), name).clicked() {
+                        let fam = family_of(font);
+                        if !fam.is_empty() {
+                            st.fmt.base_font = fam;
+                            let all = 0..st.fmt.len();
+                            st.fmt.edit(all, |c| c.font = None);
+                            st.typing.font = None;
+                        }
+                        refocus = true;
+                    }
+                }
+            })
+            .response
+            .on_hover_text(crate::tl!("Text style"));
         // Font
         let shown = cur.font.clone().unwrap_or_else(|| st.fmt.base_font.clone());
         egui::ComboBox::from_id_salt("mtext_font").width(120.0).selected_text(shown.clone()).show_ui(ui, |ui| {
@@ -224,7 +304,8 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
             (Flag::Bold, RichText::new("B").strong(), crate::tl!("Bold")),
             (Flag::Italic, RichText::new("I").italics(), crate::tl!("Italic")),
             (Flag::Underline, RichText::new("U").underline(), crate::tl!("Underline")),
-            (Flag::Overline, RichText::new("O").strikethrough(), crate::tl!("Overline")),
+            (Flag::Strike, RichText::new("S").strikethrough(), crate::tl!("Strikethrough")),
+            (Flag::Overline, RichText::new("O"), crate::tl!("Overline")),
         ] {
             if ui.selectable_label(flag_of(&cur, flag), label).on_hover_text(tip).clicked() {
                 toggle(st, flag);
@@ -262,6 +343,50 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         .response
         .on_hover_text(crate::tl!("Text color"));
         ui.separator();
+        if ui.add_enabled(!st.undo.is_empty(), egui::Button::new("<")).on_hover_text(crate::tl!("Undo")).clicked() {
+            if let Some(prev) = st.undo.pop() {
+                st.redo.push(std::mem::replace(&mut st.fmt, prev));
+                st.snap = st.fmt.clone();
+                clamp_sel(st);
+            }
+            refocus = true;
+        }
+        if ui.add_enabled(!st.redo.is_empty(), egui::Button::new(">")).on_hover_text(crate::tl!("Redo")).clicked() {
+            if let Some(next) = st.redo.pop() {
+                st.undo.push(std::mem::replace(&mut st.fmt, next));
+                st.snap = st.fmt.clone();
+                clamp_sel(st);
+            }
+            refocus = true;
+        }
+        ui.menu_button(RichText::new("A").strikethrough(), |ui| {
+            let all = 0..st.fmt.len();
+            let r = if range.is_empty() { all.clone() } else { range.clone() };
+            if ui.button(crate::tl!("Remove Character Formatting")).clicked() {
+                st.fmt.edit(r.clone(), |c| *c = CharFmt::default());
+                st.typing = CharFmt::default();
+                refocus = true;
+                ui.close();
+            }
+            if ui.button(crate::tl!("Remove Paragraph Formatting")).clicked() {
+                st.fmt.edit_paras(r.clone(), |p| *p = Default::default());
+                refocus = true;
+                ui.close();
+            }
+            if ui.button(crate::tl!("Remove All Formatting")).clicked() {
+                st.fmt.edit(all.clone(), |c| *c = CharFmt::default());
+                st.fmt.edit_paras(all.clone(), |p| *p = Default::default());
+                st.typing = CharFmt::default();
+                refocus = true;
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text(crate::tl!("Remove formatting"));
+        if ui.selectable_label(!st.no_ruler, "Ruler").on_hover_text(crate::tl!("Ruler")).clicked() {
+            st.no_ruler = !st.no_ruler;
+        }
+        ui.separator();
         // Paragraph alignment
         let para = st.fmt.para(st.fmt.paragraph_of(range.start));
         for (al, glyph, tip) in [
@@ -269,6 +394,7 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
             (ParaAlign::Center, "C", crate::tl!("Center")),
             (ParaAlign::Right, "R", crate::tl!("Right")),
             (ParaAlign::Justify, "J", crate::tl!("Justify")),
+            (ParaAlign::Distributed, "D", crate::tl!("Distribute")),
         ] {
             let on = para.align == al;
             if ui.selectable_label(on, glyph).on_hover_text(tip).clicked() {
@@ -377,6 +503,55 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
     if refocus {
         ui.ctx().memory_mut(|m| m.request_focus(edit_id()));
     }
+}
+
+/// Keep the selection inside the text (after Undo or Redo).
+fn clamp_sel(st: &mut State) {
+    let n = st.fmt.len();
+    st.sel = (st.sel.0.min(n), st.sel.1.min(n));
+    st.typing_at = st.typing_at.min(n);
+    st.caret = Some(st.sel.1);
+}
+
+/// The second toolbar row: paragraph spacing, oblique angle, tracking and width factor.
+fn format_row(ui: &mut egui::Ui, st: &mut State) {
+    let cur = current(st);
+    let range = st.sel.0.min(st.sel.1)..st.sel.0.max(st.sel.1);
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(4.0);
+        let para = st.fmt.para(st.fmt.paragraph_of(range.start));
+        ui.menu_button(crate::tl!("Paragraph"), |ui| {
+            egui::Grid::new("mtext_para").num_columns(2).show(ui, |ui| {
+                for (k, label) in [crate::tl!("Space before"), crate::tl!("Space after")].into_iter().enumerate() {
+                    ui.label(label);
+                    let mut v = if k == 0 { para.before } else { para.after };
+                    if ui.add(egui::DragValue::new(&mut v).speed(0.05).range(0.0..=10.0).max_decimals(2)).changed() {
+                        st.fmt.edit_paras(range.clone(), |p| if k == 0 { p.before = v } else { p.after = v });
+                    }
+                    ui.end_row();
+                }
+            });
+        })
+        .response
+        .on_hover_text(crate::tl!("Paragraph spacing"));
+        ui.separator();
+        // Oblique angle, tracking and width factor of the selection (or the next typed text).
+        let mut q = cur.oblique.unwrap_or(0.0);
+        ui.label("0/").on_hover_text(crate::tl!("Oblique Angle"));
+        if ui.add(egui::DragValue::new(&mut q).speed(0.5).range(-85.0..=85.0).max_decimals(1)).on_hover_text(crate::tl!("Oblique Angle")).changed() {
+            change(st, |c| c.oblique = (q.abs() > 1e-9).then_some(q));
+        }
+        let mut t = cur.track.unwrap_or(1.0);
+        ui.label("a-b").on_hover_text(crate::tl!("Tracking"));
+        if ui.add(egui::DragValue::new(&mut t).speed(0.01).range(0.75..=4.0).max_decimals(3)).on_hover_text(crate::tl!("Tracking")).changed() {
+            change(st, |c| c.track = ((t - 1.0).abs() > 1e-9).then_some(t));
+        }
+        let mut w = cur.width.unwrap_or(1.0);
+        ui.label("W").on_hover_text(crate::tl!("Width Factor"));
+        if ui.add(egui::DragValue::new(&mut w).speed(0.01).range(0.1..=10.0).max_decimals(3)).on_hover_text(crate::tl!("Width Factor")).changed() {
+            change(st, |c| c.width = ((w - 1.0).abs() > 1e-9).then_some(w));
+        }
+    });
 }
 
 /// Replace the selected characters with `s` (same length: case changes), keeping formats.
@@ -525,10 +700,11 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
                 TextFormat {
                     font_id: FontId::proportional(size),
                     color,
-                    italics: f.italic,
                     underline: if f.underline { Stroke::new(1.0, color) } else { Stroke::NONE },
-                    // The editor has one weight of each font: bold is shown wider.
-                    extra_letter_spacing: if f.bold { size * 0.06 } else { 0.0 },
+                    strikethrough: if f.strike { Stroke::new(1.0, color) } else { Stroke::NONE },
+                    italics: f.italic || f.oblique.is_some_and(|q| q.abs() > 1.0),
+                    // The editor has one weight of each font: bold is shown wider, as is tracking.
+                    extra_letter_spacing: if f.bold { size * 0.06 } else { 0.0 } + f.track.map_or(0.0, |t| (t as f32 - 1.0) * size * 0.3),
                     ..TextFormat::default()
                 },
             );

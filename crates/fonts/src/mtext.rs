@@ -152,6 +152,9 @@ struct Fmt {
     color: Option<MTextColor>,
     under: bool,
     over: bool,
+    strike: bool,
+    /// `\T` tracking: the spacing between characters, as a factor.
+    track: f64,
     wf: f64,
     oblique: f64,
     /// `\A`: vertical alignment of tolerance stacks (`^`) on the line: 0 bottom, 1 centre, 2 top.
@@ -256,6 +259,8 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
             color: None,
             under: false,
             over: false,
+            strike: false,
+            track: 1.0,
             wf: 1.0,
             oblique: 0.0,
             valign: 1,
@@ -286,7 +291,15 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                     'l' => derive(&mut fmts, &mut cur, &|f| f.under = false),
                     'O' => derive(&mut fmts, &mut cur, &|f| f.over = true),
                     'o' => derive(&mut fmts, &mut cur, &|f| f.over = false),
-                    'K' | 'k' => {}
+                    'K' => derive(&mut fmts, &mut cur, &|f| f.strike = true),
+                    'k' => derive(&mut fmts, &mut cur, &|f| f.strike = false),
+                    'T' => {
+                        let (a, n) = arg(&chars, i);
+                        i = n;
+                        if let Some(v) = num(a.trim_end_matches(['x', 'X'])).filter(|v| (0.75..=4.0).contains(v)) {
+                            derive(&mut fmts, &mut cur, &|f| f.track = v);
+                        }
+                    }
                     'S' => {
                         let mut j = i;
                         let (mut top, mut bottom, mut sep) = (String::new(), String::new(), None);
@@ -409,7 +422,7 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
 
 fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
     match seg {
-        Seg::Text(t) => text_width(&f.font, t, f.height, f.wf),
+        Seg::Text(t) => text_width(&f.font, t, f.height, f.wf) + track_gap(f) * t.chars().count() as f64,
         Seg::Stack(top, bottom, sep) => {
             let hs = f.height * STACK_SCALE;
             let wt = text_width(&f.font, top, hs, f.wf);
@@ -422,6 +435,11 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
             }
         }
     }
+}
+
+/// The extra space `\T` tracking puts after each character.
+fn track_gap(f: &Fmt) -> f64 {
+    if (f.track - 1.0).abs() < 1e-9 { 0.0 } else { (f.track - 1.0) * f.height * 0.3 }
 }
 
 /// Shape a segment with its left end at `x` on the baseline.
@@ -438,6 +456,16 @@ fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
     };
     let w = seg_width(seg, f);
     match seg {
+        Seg::Text(t) if track_gap(f) != 0.0 => {
+            // Tracked text: each character placed on its own.
+            let gap = track_gap(f);
+            let mut cx = x;
+            for c in t.chars().take(10_000) {
+                let cs = c.to_string();
+                out.extend(put(&cs, h, Vec2::new(cx, 0.0)));
+                cx += text_width(&f.font, &cs, h, f.wf) + gap;
+            }
+        }
         Seg::Text(t) => out.extend(put(t, h, Vec2::new(x, 0.0))),
         Seg::Stack(top, bottom, sep) => {
             let hs = h * STACK_SCALE;
@@ -476,6 +504,9 @@ fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
     }
     if f.over {
         out.strokes.push(vec![Vec2::new(x, h * 1.2), Vec2::new(x + w, h * 1.2)]);
+    }
+    if f.strike {
+        out.strokes.push(vec![Vec2::new(x, h * 0.45), Vec2::new(x + w, h * 0.45)]);
     }
     out
 }
@@ -543,7 +574,8 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     let wf = if p.width_factor.is_finite() && p.width_factor > 0.0 { p.width_factor } else { 1.0 };
     let width = if p.width.is_finite() && p.width > 0.0 { p.width } else { 0.0 };
     let rotation = if p.rotation.is_finite() { p.rotation } else { 0.0 };
-    let base = Fmt { font: p.font.clone(), height: h, color: None, under: false, over: false, wf, oblique: p.oblique, valign: 1 };
+    let base =
+        Fmt { font: p.font.clone(), height: h, color: None, under: false, over: false, strike: false, track: 1.0, wf, oblique: p.oblique, valign: 1 };
     let (atoms, fmts) = parse(contents, base.clone());
     if para::needed(contents, p) {
         return para::layout(contents, p, &base);
