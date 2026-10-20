@@ -90,7 +90,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let corner = cadcraft_geom::Vec2::new(mt.insert.x - col * ww / 2.0, mt.insert.y + row * base_h * 2.0);
     let at = app.canvas.xf.map_or(rect.center(), |x| x.to_screen(corner));
     let max_x = (rect.right() - width - 8.0).max(rect.left());
-    let pos = pos2(at.x.clamp(rect.left(), max_x), at.y.clamp(rect.top() + st.top, (rect.bottom() - 120.0).max(rect.top() + st.top)));
+    // The whole editor (toolbar, box, stacks, buttons) stays inside the drawing area.
+    let pos = pos2(at.x.clamp(rect.left(), max_x), at.y.clamp(rect.top() + st.top, (rect.bottom() - 190.0).max(rect.top() + st.top)));
 
     let mut done = Done::No;
     let top_start = pos.y - st.top;
@@ -408,7 +409,7 @@ fn stacks_row(ui: &mut egui::Ui, st: &mut State, t: &Tokens) {
         ui.label(RichText::new(crate::tl!("Stacked:")).small().color(t.text_dim));
         for (i, body) in &stacks {
             let shown = body.replacen(['^', '/', '#'], " / ", 1);
-            if ui.small_button(format!("{shown}  ✕")).on_hover_text(crate::tl!("Unstack")).clicked() {
+            if ui.small_button(format!("{shown}  x")).on_hover_text(crate::tl!("Unstack")).clicked() {
                 unstack = Some(*i);
             }
         }
