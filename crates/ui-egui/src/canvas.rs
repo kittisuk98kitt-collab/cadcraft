@@ -1912,11 +1912,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
 fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
     use cadcraft_engine::doc::EntityKind;
     let is_text = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
-        app.session
-            .doc()
-            .ok()?
-            .entity(h)
-            .map(|e| matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::MLeader(_)))
+        app.session.doc().ok()?.entity(h).map(|e| {
+            matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::MLeader(_) | EntityKind::Dimension(_))
+        })
     });
     if is_text != Some(true) {
         return false;

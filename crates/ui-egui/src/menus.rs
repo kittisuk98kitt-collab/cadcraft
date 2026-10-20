@@ -548,11 +548,19 @@ pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
 pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(crate::i18n::t(label));
+            // Object snap menu items carry their marker, as in the snap menu of other CAD programs.
+            let icon = crate::context_menu::has_snap_icon(id);
+            let text = if icon { format!("      {}", crate::i18n::t(label)) } else { crate::i18n::t(label).to_string() };
+            let mut b = egui::Button::new(text);
             if let Some(s) = shortcut {
                 b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
             }
-            if ui.add_enabled(*enabled, b).clicked() {
+            let r = ui.add_enabled(*enabled, b);
+            if icon {
+                let c = egui::pos2(r.rect.left() + 13.0, r.rect.center().y);
+                crate::context_menu::paint_snap_icon(ui.painter(), c, id, *enabled);
+            }
+            if r.clicked() {
                 *clicked = Some(id.clone());
                 ui.close();
             }

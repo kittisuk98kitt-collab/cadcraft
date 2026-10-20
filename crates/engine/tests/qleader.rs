@@ -293,3 +293,42 @@ fn pipe_sizes_in_inches() {
     s.execute("pipe", &json!({ "points": [[0, 0], [500, 0]], "size": "2\"" })).unwrap();
     assert!(kinds(&s).iter().any(|k| matches!(k, EntityKind::MText(t) if t.contents == "50A (2\") SGP")));
 }
+
+#[test]
+fn textedit_offers_the_in_place_editor_and_takes_stacked_text() {
+    let mut s = Session::new();
+    s.viewport_px = (1200.0, 800.0);
+    let r = s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [25, 0], "at": [12.5, 10] })).unwrap();
+    let h = cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+    let mid = match &s.doc().unwrap().entity(h).unwrap().kind {
+        EntityKind::Dimension(d) => d.text_mid,
+        _ => panic!("dimension"),
+    };
+    s.start("textedit").unwrap();
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(mid.x, mid.y))).unwrap();
+    let proxy = s.editing_mtext().expect("the editor opens");
+    assert_eq!(proxy.contents, "<>");
+    // What the editor hands back: the measurement, a fit and a stacked tolerance.
+    let mut f = cadcraft_engine::mtext_edit::Formatted::from_contents("<>H8+0.033^0");
+    assert!(f.stack(4..12));
+    s.input(cadcraft_engine::Input::Text(f.to_contents())).unwrap();
+    s.input(cadcraft_engine::Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    match &s.doc().unwrap().entity(h).unwrap().kind {
+        EntityKind::Dimension(d) => assert_eq!(d.text, "<>H8\\S+0.033^0;"),
+        _ => panic!("dimension"),
+    }
+    // Single-line text keeps plain characters.
+    let t = s.execute("text", &json!({ "at": [0, 50], "height": 2.5, "text": "ABC" })).unwrap();
+    let th = cadcraft_engine::doc::Handle::parse_hex(t["handle"].as_str().unwrap()).unwrap();
+    s.start("textedit").unwrap();
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(1.0, 51.0))).unwrap();
+    assert!(s.editing_mtext().is_some());
+    s.input(cadcraft_engine::Input::Text("{\\fArial|b1;XYZ}".into())).unwrap();
+    s.input(cadcraft_engine::Input::Enter).unwrap();
+    match &s.doc().unwrap().entity(th).unwrap().kind {
+        EntityKind::Text(t) => assert_eq!(t.value, "XYZ"),
+        _ => panic!("text"),
+    }
+}

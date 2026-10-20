@@ -275,6 +275,45 @@ impl Formatted {
         true
     }
 
+    /// The code an atom placeholder stands for (`\\S+0.033^0;`), if `c` is one.
+    pub fn atom_code(&self, c: char) -> Option<&str> {
+        let u = c as u32;
+        (ATOM_BASE..ATOM_BASE + MAX_ATOMS as u32).contains(&u).then(|| self.atoms.get((u - ATOM_BASE) as usize).map(String::as_str)).flatten()
+    }
+
+    /// The stacked text of character `i` back as plain characters (`+0.033^0`). `false` when it
+    /// isn't a stack.
+    pub fn unstack(&mut self, i: usize) -> bool {
+        let chars: Vec<char> = self.text.chars().collect();
+        let Some(&c) = chars.get(i) else { return false };
+        let Some(body) =
+            self.atom_code(c).and_then(|code| code.strip_prefix("\\S")).map(|b| b.trim_end_matches(';').replace("\\;", ";").replace("\\\\", "\\"))
+        else {
+            return false;
+        };
+        let fmt = self.fmt_at(i);
+        let new: String = chars.iter().take(i).copied().chain(body.chars()).chain(chars.iter().skip(i + 1).copied()).collect();
+        self.set_text(&new, &fmt)
+    }
+
+    /// Stack the characters of `range` (`+0.033^0`, `1/2`, `1#2`) into one stacked fraction or
+    /// tolerance (`\S…;`), kept as one atom. `false` when the range has no `^`, `/` or `#`.
+    pub fn stack(&mut self, range: std::ops::Range<usize>) -> bool {
+        let r = self.clamp(range);
+        let chars: Vec<char> = self.text.chars().collect();
+        let Some(part) = chars.get(r.clone()) else { return false };
+        let body: String = part.iter().collect();
+        if body.contains('\n') || !body.contains(['^', '/', '#']) || self.atoms.len() >= MAX_ATOMS {
+            return false;
+        }
+        let esc: String = body.chars().map(|c| if matches!(c, '\\' | ';') { format!("\\{c}") } else { c.to_string() }).collect();
+        let fmt = self.fmt_at(r.start);
+        let ch = char::from_u32(ATOM_BASE + self.atoms.len() as u32).unwrap_or('\u{FFFD}');
+        self.atoms.push(format!("\\S{esc};"));
+        let new: String = chars.iter().take(r.start).chain(std::iter::once(&ch)).chain(chars.iter().skip(r.end)).collect();
+        self.set_text(&new, &fmt)
+    }
+
     fn clamp(&self, r: std::ops::Range<usize>) -> std::ops::Range<usize> {
         r.start.min(self.fmt.len())..r.end.min(self.fmt.len())
     }

@@ -362,3 +362,129 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
     }
     enter
 }
+
+/// Whether the object snap menu draws a marker for item `id`.
+pub(crate) fn has_snap_icon(id: &str) -> bool {
+    matches!(
+        id,
+        "_tt"
+            | "_from"
+            | "_m2p"
+            | "_endp"
+            | "_mid"
+            | "_int"
+            | "_app"
+            | "_ext"
+            | "_cen"
+            | "_gcen"
+            | "_qua"
+            | "_tan"
+            | "_per"
+            | "_par"
+            | "_nod"
+            | "_ins"
+            | "_nea"
+            | "_non"
+            | OSNAP_SETTINGS
+    )
+}
+
+/// The marker of an object snap menu item, centred on `c` (drawn in code, like every icon).
+pub(crate) fn paint_snap_icon(p: &egui::Painter, c: egui::Pos2, id: &str, enabled: bool) {
+    use egui::{Shape, Stroke, vec2};
+    let t = crate::theme::Tokens::get();
+    let col = if enabled { t.snap } else { t.text_faint };
+    let thin = Stroke::new(1.0, if enabled { t.text_dim } else { t.text_faint });
+    let st = Stroke::new(1.4, col);
+    let s = 5.0;
+    let sq = |p: &egui::Painter, c: egui::Pos2, h: f32, k: Stroke| {
+        p.rect_stroke(egui::Rect::from_center_size(c, vec2(2.0 * h, 2.0 * h)), 0.0, k, egui::StrokeKind::Middle);
+    };
+    let x = |p: &egui::Painter, c: egui::Pos2, h: f32, k: Stroke| {
+        p.line_segment([c + vec2(-h, -h), c + vec2(h, h)], k);
+        p.line_segment([c + vec2(h, -h), c + vec2(-h, h)], k);
+    };
+    match id {
+        "_endp" => {
+            p.line_segment([c + vec2(-7.0, 6.0), c + vec2(3.0, -2.0)], thin);
+            sq(p, c + vec2(3.0, -2.0), 3.0, st);
+        }
+        "_mid" => {
+            p.line_segment([c + vec2(-7.0, 6.0), c + vec2(7.0, -6.0)], thin);
+            p.add(Shape::closed_line(vec![c + vec2(0.0, -4.0), c + vec2(4.0, 3.0), c + vec2(-4.0, 3.0)], st));
+        }
+        "_int" => {
+            p.line_segment([c + vec2(-7.0, 6.0), c + vec2(7.0, -6.0)], thin);
+            p.line_segment([c + vec2(-7.0, -6.0), c + vec2(7.0, 6.0)], thin);
+            x(p, c, 3.5, st);
+        }
+        "_app" => {
+            p.line_segment([c + vec2(-7.0, 6.0), c + vec2(7.0, -6.0)], thin);
+            x(p, c, 3.0, st);
+            sq(p, c, 4.0, st);
+        }
+        "_ext" => {
+            for i in 0..4 {
+                let x0 = -7.0 + i as f32 * 4.0;
+                p.line_segment([c + vec2(x0, 0.0), c + vec2(x0 + 2.0, 0.0)], st);
+            }
+        }
+        "_cen" => {
+            p.circle_stroke(c, s, st);
+        }
+        "_gcen" => {
+            p.add(Shape::closed_line((0..5).map(|i| c + egui::Vec2::angled(-std::f32::consts::FRAC_PI_2 + i as f32 * 1.2566) * 6.0).collect(), thin));
+            p.circle_stroke(c, 2.5, st);
+        }
+        "_qua" => {
+            p.add(Shape::closed_line(vec![c + vec2(0.0, -s), c + vec2(s, 0.0), c + vec2(0.0, s), c + vec2(-s, 0.0)], st));
+        }
+        "_tan" => {
+            p.circle_stroke(c + vec2(0.0, 1.5), 4.5, st);
+            p.line_segment([c + vec2(-6.0, -3.0), c + vec2(6.0, -3.0)], st);
+        }
+        "_per" => {
+            p.line_segment([c + vec2(-6.0, 5.0), c + vec2(6.0, 5.0)], thin);
+            p.line_segment([c + vec2(0.0, 5.0), c + vec2(0.0, -6.0)], st);
+            p.add(Shape::line(vec![c + vec2(0.0, 1.0), c + vec2(4.0, 1.0), c + vec2(4.0, 5.0)], st));
+        }
+        "_par" => {
+            p.line_segment([c + vec2(-6.0, 5.0), c + vec2(1.0, -6.0)], st);
+            p.line_segment([c + vec2(-1.0, 6.0), c + vec2(6.0, -5.0)], st);
+        }
+        "_nod" => {
+            p.circle_stroke(c, s, st);
+            x(p, c, 3.0, st);
+        }
+        "_ins" => {
+            sq(p, c + vec2(-1.5, -1.5), 3.5, st);
+            sq(p, c + vec2(2.0, 2.0), 3.0, thin);
+        }
+        "_nea" => {
+            p.add(Shape::closed_line(vec![c + vec2(-s, -s), c + vec2(s, -s), c + vec2(-s, s), c + vec2(s, s)], st));
+        }
+        "_non" => {
+            x(p, c, 4.0, Stroke::new(1.4, if enabled { egui::Color32::from_rgb(220, 70, 60) } else { t.text_faint }));
+        }
+        "_tt" => {
+            p.line_segment([c + vec2(-7.0, 0.0), c + vec2(3.0, 0.0)], thin);
+            p.circle_stroke(c + vec2(5.0, 0.0), 2.0, st);
+        }
+        "_from" => {
+            p.add(Shape::line(vec![c + vec2(-5.0, -6.0), c + vec2(-5.0, 5.0), c + vec2(6.0, 5.0)], thin));
+            p.circle_filled(c + vec2(-5.0, -6.0), 2.0, col);
+        }
+        "_m2p" => {
+            p.line_segment([c + vec2(-7.0, 0.0), c + vec2(7.0, 0.0)], thin);
+            p.circle_filled(c + vec2(-7.0, 0.0), 1.6, col);
+            p.circle_filled(c + vec2(7.0, 0.0), 1.6, col);
+            p.circle_stroke(c, 2.2, st);
+        }
+        _ => {
+            // Osnap Settings: a magnet.
+            p.add(Shape::line(vec![c + vec2(-4.0, -5.0), c + vec2(-4.0, 1.0)], st));
+            p.add(Shape::line(vec![c + vec2(4.0, -5.0), c + vec2(4.0, 1.0)], st));
+            p.add(Shape::line((0..=8).map(|i| c + vec2(0.0, 1.0) + egui::Vec2::angled(i as f32 * std::f32::consts::PI / 8.0) * 4.0).collect(), st));
+        }
+    }
+}

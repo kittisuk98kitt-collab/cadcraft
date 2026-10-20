@@ -416,7 +416,8 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
             let wb = text_width(&f.font, bottom, hs, f.wf);
             match sep {
                 '#' => wt + wb + f.height * 0.5,
-                '^' => wt.max(wb),
+                // A little space before a tolerance, as after the fit (H8) it follows.
+                '^' => wt.max(wb) + f.height * 0.15,
                 _ => wt.max(wb) + f.height * 0.2,
             }
         }
@@ -457,6 +458,7 @@ fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
                         2 => (0.0, -hs - h * 0.1),
                         _ => (h * 0.55, h * 0.45 - hs),
                     };
+                    let x = x + h * 0.15;
                     out.extend(put(top, hs, Vec2::new(x, yt)));
                     out.extend(put(bottom, hs, Vec2::new(x, yb)));
                 }

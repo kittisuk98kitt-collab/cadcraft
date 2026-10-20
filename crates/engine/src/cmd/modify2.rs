@@ -2,7 +2,7 @@
 //! FLATTEN, plus the fillet/trim/extend extensions used by modify.rs (arcs, polylines,
 //! ellipses and splines).
 
-use cadcraft_doc::{Common, Entity, EntityKind, Handle, LwPolyline, MAX_BLOCK_DEPTH, Space};
+use cadcraft_doc::{Common, Entity, EntityKind, Handle, LwPolyline, MAX_BLOCK_DEPTH, MText, Space};
 use cadcraft_geom::{
     Arc, Ellipse, Line, Mat3, PolyVertex, Polyline, Segment, Spline, TAU, Vec2, ccw_sweep, intersect_ext, line_circle, line_line_infinite, norm_angle,
 };
@@ -2218,11 +2218,48 @@ struct TextEditM {
     single: bool,
     /// Asking for the edit mode.
     mode: bool,
+    /// The picked object's text as multiline text, for the in-place editor; `plain`: it takes
+    /// no formatting (single-line text, attribute definitions).
+    proxy: Option<(MText, bool)>,
+}
+
+/// The in-place editor's box for an annotation object's text: where the text is, its height and
+/// style, and its contents as MTEXT codes.
+fn edit_proxy(s: &Session, k: &EntityKind) -> Option<(MText, bool)> {
+    let esc = |v: &str| v.replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}");
+    let mt = |insert, height: f64, attach, rotation, style: &str, contents: String| MText {
+        insert,
+        height,
+        width: 0.0,
+        attach,
+        rotation,
+        style: style.to_string(),
+        contents,
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    match k {
+        EntityKind::MText(t) => Some((t.clone(), false)),
+        EntityKind::Text(t) => Some((mt(t.insert, t.height, 7, t.rotation, &t.style, esc(&t.value)), true)),
+        EntityKind::AttDef(a) => Some((mt(a.text.insert, a.text.height, 7, a.text.rotation, &a.text.style, esc(&a.text.value)), true)),
+        EntityKind::MLeader(m) => m.text.clone().map(|t| (t, false)),
+        EntityKind::Dimension(d) => {
+            let ds = s.doc().ok()?.dim_style(&d.style).cloned().unwrap_or_default();
+            let k = if ds.scale > 0.0 { ds.scale } else { 1.0 };
+            let contents = if d.text.is_empty() { "<>".to_string() } else { d.text.clone() };
+            Some((mt(d.text_mid, ds.text_height * k, 5, 0.0, &ds.text_style, contents), false))
+        }
+        _ => None,
+    }
 }
 
 impl Interactive for TextEditM {
     fn name(&self) -> &'static str {
         "TEXTEDIT"
+    }
+    fn editing_mtext(&self) -> Option<MText> {
+        self.proxy.as_ref().filter(|_| self.h.is_some()).map(|(m, _)| m.clone())
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         if self.mode {
@@ -2248,13 +2285,24 @@ impl Interactive for TextEditM {
         match (&self.h, i) {
             (None, Input::Point(p)) => {
                 let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
-                let old = text_of(&curves::entity(s, h)?.kind).ok_or_else(|| other("Select a text, mtext, attribute definition or dimension."))?;
+                let kind = curves::entity(s, h)?.kind;
+                let old = text_of(&kind).ok_or_else(|| other("Select a text, mtext, attribute definition or dimension."))?;
+                self.proxy = edit_proxy(s, &kind);
                 self.h = Some((h, old));
                 Ok(Step::Continue)
             }
             (Some((h, _)), Input::Text(t) | Input::Keyword(t)) => {
                 let h = *h;
                 let before = curves::entity(s, h)?.kind;
+                // From the in-place editor: MTEXT codes; single-line text keeps the characters.
+                let t = match &self.proxy {
+                    Some((_, true)) if t.contains(['\\', '{', '}']) => cadcraft_fonts::plain_mtext(&t).replace('\n', " "),
+                    Some((_, false)) if matches!(before, EntityKind::MText(_)) || matches!(&before, EntityKind::MLeader(m) if m.text.is_some()) => {
+                        t.replace("\\P", "\n")
+                    }
+                    _ => t,
+                };
+                self.proxy = None;
                 set_text(s, h, &t)?;
                 self.edits.push((h, before));
                 self.h = None;
@@ -2262,6 +2310,7 @@ impl Interactive for TextEditM {
             }
             (Some(_), Input::Enter) => {
                 self.h = None;
+                self.proxy = None;
                 Ok(if self.single { Step::Done } else { Step::Continue })
             }
             (None, Input::Enter) => Ok(Step::Done),

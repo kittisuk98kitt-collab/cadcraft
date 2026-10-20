@@ -1567,3 +1567,23 @@
 	Mech	Механіка
 	Steel	Сталь
 	Spring	Пружина
+# Text editor toolbar.
+	Almost equal	Приблизно дорівнює
+	Center line	Осьова лінія
+	Cubed	У кубі
+	Degree %%d	Градус %%d
+	Delta	Дельта
+	Diameter %%c	Діаметр %%c
+	Lowercase	Малі літери
+	Non-breaking space	Нерозривний пробіл
+	Not equal	Не дорівнює
+	Ohm	Ом
+	Plus/Minus %%p	Плюс/мінус %%p
+	Squared	У квадраті
+	Stack (select +0.033^0, 1/2 or 1#2)	Дріб (виділіть +0.033^0, 1/2 або 1#2)
+	Stacked:	Дроби:
+	Subscript	Нижній індекс
+	Superscript	Верхній індекс
+	Symbol	Символ
+	Unstack	Розібрати дріб
+	Uppercase	Великі літери

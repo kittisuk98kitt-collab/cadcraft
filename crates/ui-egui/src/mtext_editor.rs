@@ -66,7 +66,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let (rect, scale) = app.canvas.xf.map_or((ctx.content_rect(), 20.0), |x| (x.rect, x.scale.max(1e-6)));
     let mut st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).unwrap_or_else(|| {
-        let mut fmt = Formatted::default();
+        // Editing an object's text (double-click, TEXTEDIT): its contents; MTEXT: empty.
+        let mut fmt = if mt.contents.is_empty() { Formatted::default() } else { Formatted::from_contents(&mt.contents) };
         if let Some(f) = app.session.doc().ok().and_then(|d| d.text_style(&mt.style).map(|s| s.font.clone())) {
             // A family name, not a font file (`txt.shx`, `arial.ttf`).
             if !f.is_empty() && !f.contains('.') {
@@ -97,6 +98,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             ruler(ui, &mut st, px, width, base_h);
             st.top = ui.cursor().top() - y0;
             text_box(ui, &mut st, base_h, px, width, &t);
+            stacks_row(ui, &mut st, &t);
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
                 if ui.button(crate::tl!("OK")).clicked() {
@@ -125,7 +127,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             if !st.fmt.is_empty() {
                 let _ = app.session.input(cadcraft_engine::Input::Text(st.fmt.to_contents()));
             }
-            if app.session.running.as_ref().is_some_and(|r| r.id == "mtext") {
+            if app.session.running.as_ref().is_some_and(|r| r.id == "mtext" || r.id == "textedit") {
                 let _ = app.session.input(cadcraft_engine::Input::Enter);
             }
         }
@@ -279,6 +281,82 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
             st.fmt.make_list(range.clone(), ListStyle::Number, 3.0 * base_h);
             refocus = true;
         }
+        ui.separator();
+        // Stack: the selection ("+0.033^0", "1/2") as stacked text, as AutoCAD's b/a button.
+        let sel_text: String = st.fmt.text().chars().skip(range.start).take(range.len()).collect();
+        let can_stack = sel_text.contains(['^', '/', '#']) && !sel_text.contains('\n');
+        if ui
+            .add_enabled(can_stack, egui::Button::new(RichText::new("b⁄a")))
+            .on_hover_text(crate::tl!("Stack (select +0.033^0, 1/2 or 1#2)"))
+            .clicked()
+        {
+            st.fmt.stack(range.clone());
+            st.caret = Some(range.start + 1);
+            refocus = true;
+        }
+        let has_sel = !range.is_empty();
+        if ui.add_enabled(has_sel, egui::Button::new("x²")).on_hover_text(crate::tl!("Superscript")).clicked() {
+            let new: String = st
+                .fmt
+                .text()
+                .chars()
+                .take(range.start)
+                .chain(sel_text.chars())
+                .chain(std::iter::once('^'))
+                .chain(st.fmt.text().chars().skip(range.end))
+                .collect();
+            if st.fmt.set_text(&new, &current(st)) {
+                st.fmt.stack(range.start..range.end + 1);
+            }
+            refocus = true;
+        }
+        if ui.add_enabled(has_sel, egui::Button::new("x₂")).on_hover_text(crate::tl!("Subscript")).clicked() {
+            let new: String = st
+                .fmt
+                .text()
+                .chars()
+                .take(range.start)
+                .chain(std::iter::once('^'))
+                .chain(sel_text.chars())
+                .chain(st.fmt.text().chars().skip(range.end))
+                .collect();
+            if st.fmt.set_text(&new, &current(st)) {
+                st.fmt.stack(range.start..range.end + 1);
+            }
+            refocus = true;
+        }
+        if ui.add_enabled(has_sel, egui::Button::new("AA")).on_hover_text(crate::tl!("Uppercase")).clicked() {
+            replace_sel(st, &range, &sel_text.to_uppercase());
+            refocus = true;
+        }
+        if ui.add_enabled(has_sel, egui::Button::new("aa")).on_hover_text(crate::tl!("Lowercase")).clicked() {
+            replace_sel(st, &range, &sel_text.to_lowercase());
+            refocus = true;
+        }
+        ui.menu_button("@▾", |ui| {
+            for (sym, name) in [
+                ("°", crate::tl!("Degree %%d")),
+                ("±", crate::tl!("Plus/Minus %%p")),
+                ("Ø", crate::tl!("Diameter %%c")),
+                ("≈", crate::tl!("Almost equal")),
+                ("∠", crate::tl!("Angle")),
+                ("℄", crate::tl!("Center line")),
+                ("Δ", crate::tl!("Delta")),
+                ("≠", crate::tl!("Not equal")),
+                ("Ω", crate::tl!("Ohm")),
+                ("²", crate::tl!("Squared")),
+                ("³", crate::tl!("Cubed")),
+                ("\u{a0}", crate::tl!("Non-breaking space")),
+            ] {
+                if ui.button(format!("{sym}   {name}")).clicked() {
+                    insert(st, sym);
+                    refocus = true;
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text(crate::tl!("Symbol"));
         for (glyph, tip, code) in [
             ("⇥|", crate::tl!("Insert tab"), "\t"),
             ("°", crate::tl!("Degree"), "°"),
@@ -293,6 +371,46 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
     });
     if refocus {
         ui.ctx().memory_mut(|m| m.request_focus(edit_id()));
+    }
+}
+
+/// Replace the selected characters with `s` (same length: case changes), keeping formats.
+fn replace_sel(st: &mut State, range: &std::ops::Range<usize>, s: &str) {
+    let chars: Vec<char> = st.fmt.text().chars().collect();
+    let new: String = chars.iter().take(range.start).copied().chain(s.chars()).chain(chars.iter().skip(range.end).copied()).collect();
+    let keep: Vec<CharFmt> = (range.start..range.end).map(|i| st.fmt.fmt_at(i)).collect();
+    if st.fmt.set_text(&new, &current(st)) && s.chars().count() == keep.len() {
+        for (k, f) in keep.into_iter().enumerate() {
+            st.fmt.edit(range.start + k..range.start + k + 1, |c| *c = f.clone());
+        }
+    }
+}
+
+/// The stacked texts (tolerances, fractions) of the text, each with Unstack.
+fn stacks_row(ui: &mut egui::Ui, st: &mut State, t: &Tokens) {
+    let stacks: Vec<(usize, String)> = st
+        .fmt
+        .text()
+        .chars()
+        .enumerate()
+        .filter_map(|(i, c)| st.fmt.atom_code(c).and_then(|code| code.strip_prefix("\\S")).map(|b| (i, b.trim_end_matches(';').to_string())))
+        .collect();
+    if stacks.is_empty() {
+        return;
+    }
+    let mut unstack = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(4.0);
+        ui.label(RichText::new(crate::tl!("Stacked:")).small().color(t.text_dim));
+        for (i, body) in &stacks {
+            let shown = body.replacen(['^', '/', '#'], " ⁄ ", 1);
+            if ui.small_button(format!("{shown}  ✕")).on_hover_text(crate::tl!("Unstack")).clicked() {
+                unstack = Some(*i);
+            }
+        }
+    });
+    if let Some(i) = unstack {
+        st.fmt.unstack(i);
     }
 }
 
@@ -419,7 +537,12 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
                 }
                 cur = Some(f);
             }
-            run.push(c);
+            // Codes kept whole show as one mark: a stack (tolerance, fraction) as ⁄, others as ◇.
+            run.push(match fmt.atom_code(c) {
+                Some(code) if code.starts_with("\\S") => '⁄',
+                Some(_) => '◇',
+                None => c,
+            });
         }
         if let Some(p) = &cur {
             flush(&mut job, &mut run, p);
