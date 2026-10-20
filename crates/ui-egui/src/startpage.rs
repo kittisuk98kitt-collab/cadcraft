@@ -188,7 +188,6 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let tpl = Rect::from_min_size(pos2(card.left(), card.bottom()), vec2(card.width(), 26.0));
     p.rect_filled(tpl, 0.0, Color32::from_gray(222));
     let mut tui = ui.new_child(egui::UiBuilder::new().max_rect(tpl.shrink2(vec2(6.0, 2.0))));
-    tui.visuals_mut().override_text_color = Some(Color32::from_gray(70));
     egui::ComboBox::from_id_salt("start_templates").width(tpl.width() - 14.0).selected_text(crate::tl!("Templates")).show_ui(&mut tui, |ui| {
         if ui.button(crate::tl!("ALSYS default (mm)")).clicked() {
             action = Some(("new", json!({ "template": cadcraft_engine::cmd::file::template::BUILTIN })));

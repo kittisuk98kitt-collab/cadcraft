@@ -585,6 +585,7 @@ fn stack_dialog(ctx: &egui::Context, st: &mut State) {
         .collapsible(false)
         .resizable(false)
         .order(egui::Order::Tooltip)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_width(320.0)
         .show(ctx, |ui| {
             ui.horizontal_top(|ui| {
