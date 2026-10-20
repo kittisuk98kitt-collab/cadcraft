@@ -136,6 +136,8 @@ mod web {
                             app.set_wgpu(rs, None);
                         }
                         app.use_default_template();
+                        // Start page dates in the browser's time zone.
+                        app.set_utc_offset(-(js_sys::Date::new_0().get_timezone_offset() as i32));
                         if query().contains("sample") {
                             let _ = app.run("ui.sample", serde_json::json!({}));
                         }

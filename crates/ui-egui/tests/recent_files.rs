@@ -115,8 +115,9 @@ fn start_page_lists_recent_files_and_opens_one_on_click() {
         texts(&s.shape, &mut found);
     }
     assert!(!found.iter().any(|(t, _)| t == "There is nothing here yet."), "{found:?}");
-    let names: Vec<_> = found.iter().filter(|(t, _)| t == "section.dwg" || t == "plan.dxf").collect();
-    assert_eq!(names.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["section.dwg", "plan.dxf"], "newest first");
+    // Listed by name, without the extension (as AutoCAD's Recent Documents).
+    let names: Vec<_> = found.iter().filter(|(t, _)| t == "section" || t == "plan").collect();
+    assert_eq!(names.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["section", "plan"], "newest first");
 
     let at = names[1].1.center();
     h.hover_at(at);

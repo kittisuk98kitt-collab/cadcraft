@@ -28,6 +28,7 @@ pub mod mechdlg;
 mod mtext_editor;
 pub mod qleaderdlg;
 pub mod spacemouse;
+pub mod startpage;
 // The External References palette.
 pub mod xrefs;
 
@@ -65,7 +66,7 @@ pub use control::{ControlRequest, ControlResponse, PendingReply};
 pub const PREFS_KEY: &str = "cadcraft.prefs";
 
 /// How many recently opened drawings are kept (AutoCAD's default for its file history).
-pub const RECENT_FILES: usize = 9;
+pub const RECENT_FILES: usize = 20;
 
 /// Persisted UI state (serde, so automation can read and set it).
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -115,6 +116,19 @@ pub struct UiState {
     /// Status bar items turned off in its customization menu (their command ids, or
     /// "coordinates").
     pub status_hidden: Vec<String>,
+    /// Start page: when each recent document was opened, pins and thumbnails.
+    pub recent_meta: std::collections::BTreeMap<String, startpage::RecentMeta>,
+    /// Start page view: 0 large images, 1 small images, 2 list.
+    pub recent_view: u8,
+    /// Local time zone, minutes east of UTC (Start page dates).
+    pub utc_offset_min: i32,
+    /// A document whose thumbnail is taken when the canvas shows it.
+    #[serde(skip)]
+    pub thumb_pending: Option<String>,
+    #[serde(skip)]
+    pub thumb_cache: std::collections::HashMap<String, (usize, std::sync::Arc<startpage::Thumb>)>,
+    #[serde(skip)]
+    pub last_dirty: bool,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -187,6 +201,12 @@ impl Default for UiState {
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             status_hidden: Vec::new(),
+            recent_meta: Default::default(),
+            recent_view: 0,
+            utc_offset_min: 420,
+            thumb_pending: None,
+            thumb_cache: Default::default(),
+            last_dirty: false,
         }
     }
 }
@@ -387,6 +407,12 @@ impl CadApp {
         if !self.ui.recent_files.is_empty() {
             prefs["recentFiles"] = json!(self.ui.recent_files);
         }
+        if !self.ui.recent_meta.is_empty() {
+            prefs["recentMeta"] = json!(self.ui.recent_meta);
+        }
+        if self.ui.recent_view != 0 {
+            prefs["recentView"] = json!(self.ui.recent_view);
+        }
         if !self.ui.status_hidden.is_empty() {
             prefs["statusHidden"] = json!(self.ui.status_hidden);
         }
@@ -451,6 +477,14 @@ impl CadApp {
         }
         if let Some(v) = v.get("saveVersion").and_then(Value::as_str).and_then(SaveVersion::parse) {
             self.ui.save_version = v.year().to_string();
+        }
+        if let Some(m) =
+            v.get("recentMeta").and_then(|m| serde_json::from_value::<std::collections::BTreeMap<String, startpage::RecentMeta>>(m.clone()).ok())
+        {
+            self.ui.recent_meta = m.into_iter().take(startpage::MAX_RECENT_META).collect();
+        }
+        if let Some(k) = v.get("recentView").and_then(Value::as_u64) {
+            self.ui.recent_view = k.min(2) as u8;
         }
         if let Some(files) = v.get("recentFiles").and_then(Value::as_array) {
             self.ui.recent_files = files.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).take(RECENT_FILES).map(str::to_string).collect();
@@ -564,7 +598,12 @@ impl CadApp {
         }
         let data = cadcraft_engine::cmd::file::base64_encode(bytes);
         let r = self.run("open", json!({ "data": data, "name": name }));
+        let ok = r.is_ok();
         self.opened(r);
+        // No path to reopen, but the Start page lists it (with its thumbnail).
+        if ok && self.session.state().is_ok_and(|st| st.path.is_none()) {
+            self.remember_recent(name.to_string());
+        }
     }
 
     /// Report a file that could not be opened before OPEN ran (unreadable, too large) as a failed
@@ -602,12 +641,19 @@ impl CadApp {
     fn remember_recent(&mut self, path: String) {
         let recent = &mut self.ui.recent_files;
         recent.retain(|p| *p != path);
-        recent.insert(0, path);
+        recent.insert(0, path.clone());
         recent.truncate(RECENT_FILES);
+        startpage::opened(self, &path);
+    }
+
+    /// The local time zone (minutes east of UTC) for dates on the Start page.
+    pub fn set_utc_offset(&mut self, minutes: i32) {
+        self.ui.utc_offset_min = minutes.clamp(-14 * 60, 14 * 60);
     }
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        startpage::capture(self);
         // A long LISP routine runs a slice per frame, so the window stays live (and Esc stops it).
         self.session.lisp_tick();
         if self.session.lisp_busy() {
