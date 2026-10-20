@@ -36,6 +36,8 @@ struct State {
     sel: (usize, usize),
     /// A caret position to set on the text box in the next frame (after a toolbar insertion).
     caret: Option<usize>,
+    /// Take the keyboard focus in the next frame (the editor just opened).
+    focus: bool,
 }
 
 fn state_id() -> egui::Id {
@@ -74,7 +76,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 fmt.base_font = f;
             }
         }
-        State { fmt, typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None }
+        // Typing goes into the box at once, after the text being edited.
+        let end = fmt.len();
+        State { fmt, typing: CharFmt::default(), typing_at: end, top: 70.0, sel: (end, end), caret: Some(end), focus: true }
     });
     let base_h = if mt.height > 0.0 { mt.height } else { 0.2 };
     let px = ((base_h * scale) as f32).clamp(MIN_PX, MAX_PX);
@@ -228,7 +232,7 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         }
         // Colour
         let swatch = cur.color.map_or(ui.visuals().text_color(), color32);
-        ui.menu_button(RichText::new("A▾").color(swatch).strong(), |ui| {
+        ui.menu_button(RichText::new(" A ").color(swatch).strong(), |ui| {
             if ui.button(crate::tl!("ByLayer")).clicked() {
                 change(st, |c| c.color = None);
                 refocus = true;
@@ -260,10 +264,10 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         // Paragraph alignment
         let para = st.fmt.para(st.fmt.paragraph_of(range.start));
         for (al, glyph, tip) in [
-            (ParaAlign::Left, "⇤", crate::tl!("Left")),
-            (ParaAlign::Center, "↔", crate::tl!("Center")),
-            (ParaAlign::Right, "⇥", crate::tl!("Right")),
-            (ParaAlign::Justify, "≡", crate::tl!("Justify")),
+            (ParaAlign::Left, "L", crate::tl!("Left")),
+            (ParaAlign::Center, "C", crate::tl!("Center")),
+            (ParaAlign::Right, "R", crate::tl!("Right")),
+            (ParaAlign::Justify, "J", crate::tl!("Justify")),
         ] {
             let on = para.align == al;
             if ui.selectable_label(on, glyph).on_hover_text(tip).clicked() {
@@ -273,11 +277,11 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         }
         ui.separator();
         // Lists and special characters
-        if ui.button("•≡").on_hover_text(crate::tl!("Bulleted list")).clicked() {
+        if ui.button("• List").on_hover_text(crate::tl!("Bulleted list")).clicked() {
             st.fmt.make_list(range.clone(), ListStyle::Bullet, 3.0 * base_h);
             refocus = true;
         }
-        if ui.button("1≡").on_hover_text(crate::tl!("Numbered list")).clicked() {
+        if ui.button("1. List").on_hover_text(crate::tl!("Numbered list")).clicked() {
             st.fmt.make_list(range.clone(), ListStyle::Number, 3.0 * base_h);
             refocus = true;
         }
@@ -286,7 +290,7 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         let sel_text: String = st.fmt.text().chars().skip(range.start).take(range.len()).collect();
         let can_stack = sel_text.contains(['^', '/', '#']) && !sel_text.contains('\n');
         if ui
-            .add_enabled(can_stack, egui::Button::new(RichText::new("b⁄a")))
+            .add_enabled(can_stack, egui::Button::new(RichText::new("b/a")))
             .on_hover_text(crate::tl!("Stack (select +0.033^0, 1/2 or 1#2)"))
             .clicked()
         {
@@ -333,7 +337,7 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
             replace_sel(st, &range, &sel_text.to_lowercase());
             refocus = true;
         }
-        ui.menu_button("@▾", |ui| {
+        ui.menu_button(" @ ", |ui| {
             for (sym, name) in [
                 ("°", crate::tl!("Degree %%d")),
                 ("±", crate::tl!("Plus/Minus %%p")),
@@ -358,10 +362,10 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         .response
         .on_hover_text(crate::tl!("Symbol"));
         for (glyph, tip, code) in [
-            ("⇥|", crate::tl!("Insert tab"), "\t"),
+            ("Tab", crate::tl!("Insert tab"), "\t"),
             ("°", crate::tl!("Degree"), "°"),
             ("±", crate::tl!("Plus/minus"), "±"),
-            ("⌀", crate::tl!("Diameter"), "⌀"),
+            ("Ø", crate::tl!("Diameter"), "Ø"),
         ] {
             if ui.button(glyph).on_hover_text(tip).clicked() {
                 insert(st, code);
@@ -403,7 +407,7 @@ fn stacks_row(ui: &mut egui::Ui, st: &mut State, t: &Tokens) {
         ui.add_space(4.0);
         ui.label(RichText::new(crate::tl!("Stacked:")).small().color(t.text_dim));
         for (i, body) in &stacks {
-            let shown = body.replacen(['^', '/', '#'], " ⁄ ", 1);
+            let shown = body.replacen(['^', '/', '#'], " / ", 1);
             if ui.small_button(format!("{shown}  ✕")).on_hover_text(crate::tl!("Unstack")).clicked() {
                 unstack = Some(*i);
             }
@@ -539,8 +543,8 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
             }
             // Codes kept whole show as one mark: a stack (tolerance, fraction) as ⁄, others as ◇.
             run.push(match fmt.atom_code(c) {
-                Some(code) if code.starts_with("\\S") => '⁄',
-                Some(_) => '◇',
+                Some(code) if code.starts_with("\\S") => '¦',
+                Some(_) => '¤',
                 None => c,
             });
         }
@@ -559,7 +563,7 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
         .char_limit(cadcraft_engine::mtext_edit::MAX_CHARS)
         .layouter(&mut layouter)
         .show(ui);
-    if !out.response.has_focus() && buf.is_empty() && st.fmt.is_empty() {
+    if std::mem::take(&mut st.focus) || (!out.response.has_focus() && buf.is_empty() && st.fmt.is_empty()) {
         out.response.request_focus();
     }
     if out.response.changed() {
