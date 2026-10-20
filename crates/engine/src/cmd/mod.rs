@@ -33,6 +33,7 @@ pub mod plotters;
 mod props;
 pub use props::MatchProps;
 pub mod actions;
+mod classic;
 mod express;
 pub mod hole;
 pub mod pipe;
@@ -194,6 +195,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(steel::specs());
         v.extend(express::specs());
         v.extend(xclip::specs());
+        v.extend(classic::specs());
         v.extend(mleader_edit::specs());
         v.extend(annoscale::specs());
         v.extend(hatch::specs());

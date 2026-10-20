@@ -449,3 +449,42 @@ fn stack_properties_edit_a_tolerance() {
     assert!(f.unstack(i));
     assert_eq!(f.text(), "37.2+0.3^+0.1");
 }
+
+#[test]
+fn command_line_forms_autocad_users_type() {
+    let mut s = Session::new();
+    // -HATCH Properties: pattern, scale, angle.
+    s.execute("rectang", &json!({"p1": [0, 0], "p2": [10, 10]})).unwrap();
+    typed(&mut s, &["-hatch", "p", "ansi31", "2", "45", "5,5", ""]);
+    let h = s.doc().unwrap().model.iter().find_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None }).unwrap();
+    assert!((h.scale - 2.0).abs() < 1e-9 && (h.angle.to_degrees() - 45.0).abs() < 1e-6);
+    // Classic -ARRAY: 2 rows × 3 columns of the circle.
+    s.execute("circle", &json!({"center": [50, 50], "radius": 2})).unwrap();
+    let n0 = s.doc().unwrap().model.len();
+    let c = s.doc().unwrap().model.iter().last().unwrap().handle;
+    s.set_selection(vec![c]);
+    typed(&mut s, &["-array", "r", "2", "3", "10", "10"]);
+    assert_eq!(s.doc().unwrap().model.len(), n0 + 5);
+    assert!(s.running.is_none());
+    // BREAKATPOINT prompts.
+    s.execute("line", &json!({"points": [[0, -20], [10, -20]]})).unwrap();
+    let l = s.doc().unwrap().model.iter().last().unwrap().handle;
+    s.set_selection(vec![l]);
+    typed(&mut s, &["breakatpoint", "4,-20"]);
+    assert!(s.running.is_none());
+    // CHPROP, MODEL, -STYLE, -DIMSTYLE.
+    s.set_selection(vec![c]);
+    typed(&mut s, &["chprop", "c", "1", ""]);
+    assert_eq!(format!("{:?}", s.doc().unwrap().entity(c).unwrap().common.color), "Index(1)");
+    typed(&mut s, &["model"]);
+    typed(&mut s, &["-style", "MYSTYLE", "romans", "0", "0.8", "0", "n", "n"]);
+    assert_eq!(s.doc().unwrap().header.str("TEXTSTYLE", ""), "MYSTYLE");
+    typed(&mut s, &["-dimstyle", "s", "MYDIM"]);
+    assert_eq!(s.doc().unwrap().header.str("DIMSTYLE", ""), "MYDIM");
+    // DIMCONTINUE: Enter goes to "Select continued dimension", Enter again ends.
+    s.execute("dimlinear", &json!({"p1": [0, 0], "p2": [10, 0], "at": [5, -5]})).unwrap();
+    typed(&mut s, &["dimcontinue", "20,0", ""]);
+    assert!(s.running.is_some());
+    typed(&mut s, &[""]);
+    assert!(s.running.is_none());
+}

@@ -1649,11 +1649,13 @@ impl Interactive for OrdinateM {
 struct ChainM {
     baseline: bool,
     created: Vec<Handle>,
+    /// "Select continued/base dimension" (Enter at the point prompt, or no dimension yet).
+    selecting: bool,
 }
 
 impl ChainM {
     fn new(_s: &Session, baseline: bool) -> Self {
-        ChainM { baseline, created: Vec::new() }
+        ChainM { baseline, created: Vec::new(), selecting: false }
     }
 }
 
@@ -1661,21 +1663,46 @@ impl Interactive for ChainM {
     fn name(&self) -> &'static str {
         if self.baseline { "DIMBASELINE" } else { "DIMCONTINUE" }
     }
-    fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        if last_linear(s).is_none() {
-            s.echo("No linear dimension to continue. Create one with DIMLINEAR first.");
-            return Ok(Step::Done);
-        }
+    fn begin(&mut self, _s: &mut Session) -> Result<Step> {
         Ok(Step::Continue)
     }
     fn prompt(&self, s: &Session) -> Prompt {
+        if self.selecting || last_linear(s).is_none() {
+            let what = if self.baseline { "Select base dimension" } else { "Select continued dimension" };
+            return Prompt::new(what, Accept::SELECT);
+        }
         Prompt::new("Specify a second extension line origin", Accept::POINT)
             .kw(&["Select", "Undo"])
             .default("Select")
             .base_opt(last_linear(s).map(|d| if self.baseline { d.p13.xy() } else { d.p14.xy() }))
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.selecting || last_linear(s).is_none() {
+            return match i {
+                Input::Pick(hs) => {
+                    let d = s.doc()?;
+                    let dim = hs.iter().copied().find(|h| {
+                        matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Dimension(dm)) if matches!(dm.kind, DimKind::Linear { .. } | DimKind::Aligned))
+                    });
+                    match dim {
+                        Some(h) => {
+                            s.last_dim = Some(h);
+                            self.selecting = false;
+                        }
+                        None => s.echo("Select a linear or aligned dimension."),
+                    }
+                    s.set_selection(Vec::new());
+                    Ok(Step::Continue)
+                }
+                Input::Enter | Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            };
+        }
         match i {
+            Input::Keyword(k) if k == "Select" => {
+                self.selecting = true;
+                Ok(Step::Continue)
+            }
             Input::Point(p) => {
                 let prev = last_linear(s).ok_or_else(|| EngineError::Other("no linear dimension".into()))?;
                 let k = chained(s, &prev, p, self.baseline);
@@ -1689,7 +1716,11 @@ impl Interactive for ChainM {
                 }
                 Ok(Step::Continue)
             }
-            Input::Enter => Ok(Step::Done),
+            // Enter takes the default, Select, as in AutoCAD; Enter there ends.
+            Input::Enter => {
+                self.selecting = true;
+                Ok(Step::Continue)
+            }
             _ => Ok(Step::Continue),
         }
     }

@@ -138,6 +138,9 @@ fn hatch_pattern_prompt_takes_a_pat_file_name() {
     s.cmdline("hatch").unwrap();
     s.cmdline("p").unwrap();
     s.cmdline(&path).unwrap();
+    // Scale and angle (as -HATCH asks them): Enter keeps them.
+    s.cmdline("").unwrap();
+    s.cmdline("").unwrap();
     // The pattern named like the file is the one used.
     s.cmdline("5,5").unwrap();
     s.cmdline("").unwrap();
@@ -149,6 +152,8 @@ fn hatch_pattern_prompt_takes_a_pat_file_name() {
     s.cmdline("hatch").unwrap();
     s.cmdline("p").unwrap();
     s.cmdline("myother").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("").unwrap();
     s.cmdline("5,5").unwrap();
     s.cmdline("").unwrap();
     assert_eq!(hatches(&s).iter().filter(|h| h.pattern == "MYOTHER").count(), 1);

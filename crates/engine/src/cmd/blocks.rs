@@ -131,8 +131,20 @@ pub(crate) fn make_block(s: &mut Session, name: &str, base: Vec2, hs: &[Handle],
     b.base = v3(base);
     b.description = description.to_string();
     let doc = s.doc_mut()?;
+    let renamed: std::collections::HashMap<Handle, Handle> = ents.iter().map(|e| (e.handle, doc.new_handle())).collect();
     for mut e in ents {
-        e.handle = doc.new_handle();
+        e.handle = renamed.get(&e.handle).copied().unwrap_or(e.handle);
+        // Associative dimensions follow the objects into the block; associations to objects
+        // left outside it go (a block can't refer to the drawing's objects).
+        if let EntityKind::Dimension(dm) = &mut e.kind {
+            dm.assoc.retain_mut(|a| match renamed.get(&a.handle) {
+                Some(n) => {
+                    a.handle = *n;
+                    true
+                }
+                None => false,
+            });
+        }
         b.entities.push(e);
     }
     doc.blocks.insert(name.to_string(), Arc::new(b));

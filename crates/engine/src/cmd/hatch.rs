@@ -203,9 +203,23 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
     let space = s.space();
     let ext = d.extents(&space);
     let tol = ((ext.width() + ext.height()) * 1e-9).max(1e-9);
-    let (polys, owners) = outlines(d, &space, None);
-    let found = cadcraft_geom::region::boundary_at_gap(&polys, p, tol, gap_tolerance(d))
-        .ok_or_else(|| EngineError::Other("Valid hatch boundary not found.".into()))?;
+    // Search outward from the pick point: only objects near it take part, the area growing
+    // until the boundary found lies inside it (an object that cuts into the boundary must then
+    // meet the area too). Large drawings stay within the tracer's limits this way.
+    let size = ext.width().max(ext.height()).max(1e-6);
+    let mut r = size / 64.0;
+    let (found, owners) = loop {
+        let whole = r >= size * 2.0;
+        let near = (!whole).then(|| Bounds2::new(p - Vec2::new(r, r), p + Vec2::new(r, r)));
+        let (polys, owners) = outlines(d, &space, near);
+        let found = cadcraft_geom::region::boundary_at_gap(&polys, p, tol, gap_tolerance(d));
+        match (found, near) {
+            (Some(f), Some(w)) if w.contains_box(&Bounds2::from_points(f.outer.iter().copied())) => break (f, owners),
+            (Some(f), None) => break (f, owners),
+            (None, None) => return Err(EngineError::Other("Valid hatch boundary not found.".into())),
+            _ => r *= 4.0,
+        }
+    };
     let outer = found.outer;
     let ob = Bounds2::from_points(outer.iter().copied());
     let sources = handles_of(&owners, &found.outer_sources);
@@ -539,6 +553,8 @@ struct HatchM {
     /// Loops by pick (one hatch each when separate).
     loops: Vec<Vec<HatchLoop>>,
     asking: Option<HatchAsk>,
+    /// The Properties option asks pattern, scale and angle in turn (as -HATCH does).
+    chain: bool,
     /// "Select objects" mode instead of "Pick internal point"; the next HATCH starts in it again.
     selecting: bool,
 }
@@ -550,6 +566,7 @@ impl HatchM {
             settings: HatchSettings::from(s, &Value::Null, gradient),
             loops: Vec::new(),
             asking: None,
+            chain: false,
             selecting: s.last_used.hatch_select,
         }
     }
@@ -674,11 +691,27 @@ impl Interactive for HatchM {
         ]))
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // A point picked at the scale or angle prompt ends those questions and picks a boundary.
+        if matches!(i, Input::Point(_)) && matches!(self.asking, Some(HatchAsk::Scale | HatchAsk::Angle | HatchAsk::Pattern)) {
+            self.asking = None;
+            self.chain = false;
+        }
         if let Some(a) = self.asking.take() {
             match &i {
                 Input::Point(p) if a == HatchAsk::Origin => self.set_origin(s, Some(*p), OriginMode::Current)?,
                 Input::Text(t) | Input::Keyword(t) => self.answer(s, a, t)?,
                 _ => {}
+            }
+            // Properties: pattern, then scale, then angle (Enter keeps each).
+            if self.chain && !self.settings.pattern.eq_ignore_ascii_case("SOLID") {
+                self.asking = match a {
+                    HatchAsk::Pattern => Some(HatchAsk::Scale),
+                    HatchAsk::Scale => Some(HatchAsk::Angle),
+                    _ => None,
+                };
+            }
+            if self.asking.is_none() {
+                self.chain = false;
             }
             return Ok(Step::Continue);
         }
@@ -712,7 +745,10 @@ impl Interactive for HatchM {
                     "Select objects" => self.set_mode(s, true),
                     "picK internal point" => self.set_mode(s, false),
                     "Undo" => self.loops.clear(),
-                    "Pattern" | "seTtings" => self.asking = Some(HatchAsk::Pattern),
+                    "Pattern" | "seTtings" => {
+                        self.asking = Some(HatchAsk::Pattern);
+                        self.chain = !self.gradient;
+                    }
                     "sCale" => self.asking = Some(HatchAsk::Scale),
                     "Angle" => self.asking = Some(HatchAsk::Angle),
                     "Origin" => self.asking = Some(HatchAsk::Origin),
