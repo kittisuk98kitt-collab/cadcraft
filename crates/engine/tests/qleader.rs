@@ -385,7 +385,7 @@ fn xclip_clips_renders_and_round_trips_through_dxf() {
         while k < lines.len() {
             if lines[k].trim() == "1001" && lines.get(k + 1).map(|l| l.trim()) == Some("CADCRAFT") {
                 k += 2;
-                while k + 1 < lines.len() && lines[k].trim().parse::<i32>().map_or(false, |c| c >= 1000) && lines[k].trim() != "1001" {
+                while k + 1 < lines.len() && lines[k].trim().parse::<i32>().is_ok_and(|c| c >= 1000) && lines[k].trim() != "1001" {
                     k += 2;
                 }
                 continue;
