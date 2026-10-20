@@ -117,6 +117,9 @@ struct Ctx {
     ltypes: HashMap<String, String>,
     /// Associative dimension → its DIMASSOC object.
     assoc: HashMap<Handle, AssocObj>,
+    /// Clipped block references (XCLIP): extension dictionary, ACAD_FILTER dictionary and
+    /// SPATIAL_FILTER handles.
+    xclips: HashMap<Handle, (String, String, String)>,
     /// Table → (anonymous `*T` block name, BLOCK_RECORD handle).
     tables: HashMap<Handle, (String, String)>,
     /// Table style name → TABLESTYLE handle (the first is the fallback).
@@ -342,11 +345,11 @@ fn transparency_440(t: Transparency) -> Option<i64> {
 }
 
 fn common(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass: &str) {
-    common_x(w, e, owner, paper, subclass, None);
+    common_x(w, e, owner, paper, subclass, None, None);
 }
 
 /// Common entity groups; `assoc` adds the reactor and extension dictionary of a DIMASSOC.
-fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass: &str, assoc: Option<&AssocObj>) {
+fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass: &str, assoc: Option<&AssocObj>, xdict: Option<&str>) {
     w.s(5, e.handle.hex());
     let mut reactors: Vec<String> = assoc.map(|a| a.handle.clone()).into_iter().collect();
     reactors.extend(w.reactors.get(&e.handle).into_iter().flatten().cloned());
@@ -356,6 +359,8 @@ fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass: &str, ass
     }
     if let Some(a) = assoc {
         w.group("ACAD_XDICTIONARY", 360, &[&a.xdict]);
+    } else if let Some(x) = xdict {
+        w.group("ACAD_XDICTIONARY", 360, &[x]);
     }
     w.s(330, owner);
     w.s(100, "AcDbEntity");
@@ -746,7 +751,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         }
         EntityKind::Insert(i) => {
             w.s(0, "INSERT");
-            common(w, e, owner, paper, "AcDbBlockReference");
+            common_x(w, e, owner, paper, "AcDbBlockReference", None, cx.xclips.get(&e.handle).map(|x| x.0.as_str()));
             if !i.attribs.is_empty() {
                 w.i(66, 1);
             }
@@ -761,6 +766,9 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 w.i(71, i64::from(i.rows));
                 w.f(44, i.col_spacing);
                 w.f(45, i.row_spacing);
+            }
+            if let Some(c) = &i.clip {
+                w.xdata(dxf_ext::json_xdata("XCLIP", c));
             }
             if !i.attribs.is_empty() {
                 for a in &i.attribs {
@@ -791,7 +799,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         }
         EntityKind::Dimension(dm) => {
             w.s(0, "DIMENSION");
-            common_x(w, e, owner, paper, "AcDbDimension", cx.assoc.get(&e.handle));
+            common_x(w, e, owner, paper, "AcDbDimension", cx.assoc.get(&e.handle), None);
             let bname = cx.dim_blocks.get(&e.handle).cloned().or_else(|| dm.block.clone()).unwrap_or_default();
             w.s(2, bname);
             w.p(10, dm.defpt);
@@ -1729,6 +1737,11 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
                     cx.assoc.insert(e.handle, AssocObj { xdict: w.h(), handle: w.h(), flags, refs });
                 }
             }
+            if let EntityKind::Insert(i) = &e.kind
+                && i.clip.is_some()
+            {
+                cx.xclips.insert(e.handle, (w.h(), w.h(), w.h()));
+            }
         }
     }
     let default_table_style = [TableStyle::default()];
@@ -2347,6 +2360,33 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
             }
             w.i(75, 0);
         }
+    }
+    // XCLIP boundaries: extension dictionary → ACAD_FILTER → SPATIAL (DXF Reference).
+    let mut xclips: Vec<(&Handle, &(String, String, String))> = cx.xclips.iter().collect();
+    xclips.sort_by_key(|(h, _)| **h);
+    for (ih, (xd, fd, sf)) in xclips {
+        let Some(EntityKind::Insert(i)) = d.entity(*ih).map(|e| &e.kind) else { continue };
+        let Some(c) = &i.clip else { continue };
+        let ihx = ih.hex();
+        w.s(0, "DICTIONARY");
+        w.s(5, xd.clone());
+        w.group("ACAD_REACTORS", 330, &[&ihx]);
+        w.s(330, ihx.clone());
+        w.s(100, "AcDbDictionary");
+        w.i(280, 1);
+        w.i(281, 1);
+        w.s(3, "ACAD_FILTER");
+        w.s(360, fd.clone());
+        w.s(0, "DICTIONARY");
+        w.s(5, fd.clone());
+        w.group("ACAD_REACTORS", 330, &[xd]);
+        w.s(330, xd.clone());
+        w.s(100, "AcDbDictionary");
+        w.i(280, 1);
+        w.i(281, 1);
+        w.s(3, "SPATIAL");
+        w.s(360, sf.clone());
+        w.t.extend(crate::dxf_xclip::spatial_filter(d, i, c, sf, fd));
     }
     w.s(0, "DICTIONARY");
     w.s(5, layout_dict.clone());

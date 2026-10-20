@@ -494,6 +494,24 @@ pub struct Insert {
     pub col_spacing: f64,
     #[serde(default)]
     pub row_spacing: f64,
+    /// XCLIP clip boundary, in block coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<XClip>,
+}
+
+/// The clip boundary of a block reference (XCLIP).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XClip {
+    /// The boundary polygon in the block's coordinates (before the reference's transform); a
+    /// rectangle is four points.
+    pub boundary: Vec<Vec2>,
+    /// Clipping on (XCLIP ON/OFF).
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// The part outside the boundary shows instead of the part inside.
+    #[serde(default)]
+    pub inverted: bool,
 }
 fn unit_scale() -> Vec3 {
     Vec3::new(1.0, 1.0, 1.0)

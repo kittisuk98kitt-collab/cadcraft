@@ -685,6 +685,39 @@ pub(crate) fn array_xdata(p: &ArrayParams) -> Vec<Tag> {
     v
 }
 
+/// A value as CADCraft xdata: `1000 NAME`, `1002 {`, its JSON in short `1000` strings, `1002 }`
+/// (as [`array_xdata`]). Starts with `1001 CADCRAFT`.
+pub(crate) fn json_xdata<T: Serialize>(name: &str, v: &T) -> Vec<Tag> {
+    let Ok(json) = serde_json::to_string(v) else { return Vec::new() };
+    let safe = json_chunks(&json).concat();
+    let mut out = vec![Tag::s(1001, APP), Tag::s(1000, name), Tag::s(1002, "{")];
+    let (mut cur, mut cost) = (String::new(), 0usize);
+    for c in safe.chars() {
+        let n = if c.is_ascii() { 1 } else { 7 * c.len_utf16() };
+        if cost + n > 240 {
+            out.push(Tag::s(1000, std::mem::take(&mut cur)));
+            cost = 0;
+        }
+        cur.push(c);
+        cost += n;
+    }
+    if !cur.is_empty() {
+        out.push(Tag::s(1000, cur));
+    }
+    out.push(Tag::s(1002, "}"));
+    out
+}
+
+/// The value [`json_xdata`] wrote under `name`.
+pub(crate) fn read_json<T: serde::de::DeserializeOwned>(tags: &[Tag], name: &str) -> Option<T> {
+    let list = xdata_list(xdata(tags, APP), name);
+    let mut text = String::new();
+    for t in list.iter().take(MAX_XDATA_ITEMS).filter(|t| t.code == 1000) {
+        text.push_str(&t.str());
+    }
+    serde_json::from_str(&text).ok()
+}
+
 /// The array parameters written by [`array_xdata`]; `None` for other records and for
 /// parameters that are not usable.
 pub(crate) fn read_array(tags: &[Tag]) -> Option<ArrayParams> {

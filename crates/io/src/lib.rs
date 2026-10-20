@@ -11,6 +11,7 @@ mod dxf_mleader;
 mod dxf_read;
 mod dxf_table;
 mod dxf_write;
+mod dxf_xclip;
 mod dxf_xref;
 pub mod pdf;
 pub mod plotter;

@@ -416,6 +416,7 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
                 rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
                 col_spacing,
                 row_spacing: t.fd(45, 0.0),
+                clip: None,
             })
         }
         "DIMENSION" => {
@@ -1076,6 +1077,9 @@ fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &m
         }
         ("INSERT", EntityKind::Insert(ins)) => {
             rx.inserted.insert(ins.block.to_ascii_uppercase());
+            // CADCraft's clip (exact, with Invert); AutoCAD's SPATIAL_FILTER is read later.
+            ins.clip = crate::dxf_ext::read_json::<cadcraft_doc::XClip>(tags, "XCLIP")
+                .filter(|c| c.boundary.len() >= 3 && c.boundary.len() <= 100_000 && c.boundary.iter().all(|p| p.is_finite()));
         }
         ("MULTILEADER" | "MLEADER", EntityKind::MLeader(m)) => {
             let pending = crate::dxf_mleader::resolve(tags, m, &rx.styles, &rx.brs);
@@ -1830,6 +1834,7 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
     if d.layer("0").is_none() {
         d.layers.insert(0, Layer::default());
     }
+    crate::dxf_xclip::read(&secs, &mut d);
     crate::dxf_raw::read(&secs, &mut d);
     d.skipped_records = skipped;
     Ok(d)

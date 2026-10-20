@@ -349,3 +349,80 @@ fn mtext_strike_oblique_tracking_width_round_trip() {
     g.toggle(0..2, Flag::Strike);
     assert!(g.to_contents().contains("\\K"));
 }
+
+#[test]
+fn xclip_clips_renders_and_round_trips_through_dxf() {
+    let mut s = Session::new();
+    // A block of two lines, 0..100 wide, inserted at the origin.
+    s.execute("line", &json!({"points": [[0, 0], [100, 0]]})).unwrap();
+    s.execute("line", &json!({"points": [[0, 50], [100, 50]]})).unwrap();
+    let all: Vec<String> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    s.execute("block", &json!({"name": "B", "base": [0, 0], "handles": all, "keep": "delete"})).unwrap();
+    let r = s.execute("insert", &json!({"name": "B", "at": [10, 10]})).unwrap();
+    let h = r["handle"].as_str().unwrap().to_string();
+    s.execute("xclip", &json!({"handles": [h], "boundary": [[20, 0], [60, 100]]})).unwrap();
+    let d = s.doc().unwrap();
+    let EntityKind::Insert(i) = &d.model.iter().find(|e| e.handle.hex() == h).unwrap().kind else { panic!() };
+    let c = i.clip.as_ref().unwrap();
+    assert_eq!(c.boundary.len(), 4);
+    assert!((c.boundary[0].x - 10.0).abs() < 1e-9);
+    // Clipped: the drawn lines span 20..60 only.
+    let list = cadcraft_render::build(d, &cadcraft_engine::doc::Space::Model, &Default::default());
+    let xs: Vec<f64> = list.verts.iter().map(|v| v.x).collect();
+    let (lo, hi) = (xs.iter().cloned().fold(f64::MAX, f64::min), xs.iter().cloned().fold(f64::MIN, f64::max));
+    assert!((lo - 20.0).abs() < 1e-6 && (hi - 60.0).abs() < 1e-6, "{lo} {hi}");
+    // DXF: CADCraft's xdata and AutoCAD's SPATIAL_FILTER.
+    let text = cadcraft_io::write_dxf(d);
+    assert!(text.contains("SPATIAL_FILTER") && text.contains("ACAD_FILTER"));
+    let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
+    let ins = back.model.iter().find_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.clone()) } else { None }).unwrap();
+    assert_eq!(ins.clip.as_ref().unwrap().boundary.len(), 4);
+    // Without CADCraft's xdata the SPATIAL_FILTER alone gives the boundary.
+    let stripped: String = {
+        let lines: Vec<&str> = text.lines().collect();
+        let mut out = Vec::new();
+        let mut k = 0;
+        while k < lines.len() {
+            if lines[k].trim() == "1001" && lines.get(k + 1).map(|l| l.trim()) == Some("CADCRAFT") {
+                k += 2;
+                while k + 1 < lines.len() && lines[k].trim().parse::<i32>().map_or(false, |c| c >= 1000) && lines[k].trim() != "1001" {
+                    k += 2;
+                }
+                continue;
+            }
+            out.push(lines[k]);
+            k += 1;
+        }
+        out.join("\n")
+    };
+    let back = cadcraft_io::read_dxf(stripped.as_bytes()).unwrap();
+    let ins = back.model.iter().find_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.clone()) } else { None }).unwrap();
+    let c = ins.clip.expect("clip from SPATIAL_FILTER");
+    assert!(c.boundary.iter().any(|p| (p.x - 10.0).abs() < 1e-6 && (p.y + 10.0).abs() < 1e-6), "{:?}", c.boundary);
+    // Off, then delete.
+    s.execute("xclip", &json!({"handles": [h], "op": "off"})).unwrap();
+    s.execute("xclip", &json!({"handles": [h], "op": "delete"})).unwrap();
+    let d = s.doc().unwrap();
+    let EntityKind::Insert(i) = &d.model.iter().find(|e| e.handle.hex() == h).unwrap().kind else { panic!() };
+    assert!(i.clip.is_none());
+}
+
+#[test]
+fn xclip_typed_rectangle_and_invert() {
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 10})).unwrap();
+    let all: Vec<String> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    s.execute("block", &json!({"name": "C", "base": [0, 0], "handles": all, "keep": "delete"})).unwrap();
+    let h = s.execute("insert", &json!({"name": "C", "at": [0, 0]})).unwrap()["handle"].as_str().unwrap().to_string();
+    s.set_selection(vec![cadcraft_engine::doc::Handle::parse_hex(&h).unwrap()]);
+    typed(&mut s, &["xclip", "", "i", "-5,-5", "5,5"]);
+    assert!(s.running.is_none());
+    let d = s.doc().unwrap();
+    let EntityKind::Insert(i) = &d.model.iter().find(|e| e.handle.hex() == h).unwrap().kind else { panic!() };
+    let c = i.clip.as_ref().unwrap();
+    assert!(c.inverted && c.enabled);
+    // Inverted: the circle shows (it lies outside the hole).
+    let list = cadcraft_render::build(d, &cadcraft_engine::doc::Space::Model, &Default::default());
+    assert!(list.verts.iter().any(|v| (v.len() - 10.0).abs() < 0.1));
+    typed(&mut s, &["xclip", "p"]);
+}

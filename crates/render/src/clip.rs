@@ -249,7 +249,10 @@ fn clean_polygon(pts: Vec<Vec2>) -> Option<Vec<Vec2>> {
 /// edges bucketed into horizontal bands to keep tests fast on large display lists.
 #[derive(Clone, Debug)]
 pub struct PolyClip {
+    /// The first outline.
     poly: Vec<Vec2>,
+    /// Edges of every outline.
+    edges: Vec<(Vec2, Vec2)>,
     bounds: Bounds2,
     /// Edge indices whose y range meets each band.
     bands: Vec<Vec<u32>>,
@@ -261,20 +264,32 @@ pub struct PolyClip {
 impl PolyClip {
     /// A clip region for `poly` (see [`clean_polygon`]); `None` for a degenerate outline.
     pub fn new(poly: &[Vec2]) -> Option<PolyClip> {
-        let poly = clean_polygon(poly.to_vec())?;
-        let bounds = Bounds2::from_points(poly.iter().copied());
+        PolyClip::rings(&[poly.to_vec()])
+    }
+    /// A clip region of several outlines, even-odd (an outline inside another is a hole).
+    pub fn rings(rings: &[Vec<Vec2>]) -> Option<PolyClip> {
+        let rings: Vec<Vec<Vec2>> = rings.iter().take(64).filter_map(|r| clean_polygon(r.clone())).collect();
+        let first = rings.first()?.clone();
+        let bounds = Bounds2::from_points(rings.iter().flatten().copied());
         let band_h = bounds.height() / BANDS as f64;
         let mut bands: Vec<Vec<u32>> = vec![Vec::new(); BANDS];
-        let n = poly.len();
-        let mut clip = PolyClip { poly: Vec::new(), bounds, bands: Vec::new(), band_h, tris: Vec::new() };
-        for i in 0..n {
-            let (Some(a), Some(b)) = (poly.get(i), poly.get((i + 1) % n)) else { continue };
+        let mut edges: Vec<(Vec2, Vec2)> = Vec::new();
+        for r in &rings {
+            let n = r.len();
+            for i in 0..n {
+                if let (Some(a), Some(b)) = (r.get(i), r.get((i + 1) % n)) {
+                    edges.push((*a, *b));
+                }
+            }
+        }
+        let mut clip = PolyClip { poly: Vec::new(), edges: Vec::new(), bounds, bands: Vec::new(), band_h, tris: Vec::new() };
+        for (i, (a, b)) in edges.iter().enumerate() {
             let (lo, hi) = (clip.band(a.y.min(b.y)), clip.band(a.y.max(b.y)));
             for band in bands.iter_mut().take(hi + 1).skip(lo) {
                 band.push(i as u32);
             }
         }
-        let tris = crate::fill::triangulate_evenodd(std::slice::from_ref(&poly));
+        let tris = crate::fill::triangulate_evenodd(&rings);
         clip.tris = tris
             .as_chunks::<3>()
             .0
@@ -282,7 +297,8 @@ impl PolyClip {
             .map(|t| (*t, Bounds2::from_points(t.iter().copied())))
             .filter(|(_, b)| b.width() > 0.0 && b.height() > 0.0)
             .collect();
-        clip.poly = poly;
+        clip.poly = first;
+        clip.edges = edges;
         clip.bands = bands;
         Some(clip)
     }
@@ -299,7 +315,7 @@ impl PolyClip {
     }
     fn edge(&self, i: u32) -> Option<(Vec2, Vec2)> {
         let i = i as usize;
-        Some((*self.poly.get(i)?, *self.poly.get((i + 1) % self.poly.len().max(1))?))
+        self.edges.get(i).copied()
     }
     /// Even-odd point-in-polygon test.
     pub fn contains(&self, p: Vec2) -> bool {

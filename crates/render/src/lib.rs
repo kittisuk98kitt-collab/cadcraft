@@ -786,7 +786,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // The contents are in paper units now: draw their pens before clipping.
     pen::apply(&mut sub.list, paper::paper_unit_mm(d));
     b.list.expanded = b.list.expanded.saturating_add(sub.list.expanded);
-    append_clipped(&mut b.list, &sub.list, clip);
+    append_clipped(&mut b.list, &sub.list, clip, false);
 }
 
 /// The clip region of a clipped viewport: the outline of its clip boundary entity, when that
@@ -807,8 +807,32 @@ enum Clip<'a> {
 }
 
 /// Append `src` to `dst`, clipped to `clip`.
-fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
-    for p in &src.prims {
+/// `keep`: the pieces keep their primitive's layer and pen (block contents clipped by XCLIP).
+fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip, keep: bool) {
+    if keep && !src.pens.is_empty() {
+        dst.pens.resize(dst.prims.len(), Pen::default());
+    }
+    for (k, p) in src.prims.iter().enumerate() {
+        let before = dst.prims.len();
+        append_clipped_prim(dst, src, p, clip);
+        if keep {
+            let added = dst.prims.len() - before;
+            if !src.prim_layers.is_empty() {
+                let l = src.prim_layers.get(k).copied().unwrap_or(NO_LAYER);
+                dst.prim_layers.resize(before, NO_LAYER);
+                dst.prim_layers.extend(std::iter::repeat_n(l, added));
+            }
+            if !src.pens.is_empty() {
+                let pen = src.pens.get(k).cloned().unwrap_or_default();
+                dst.pens.resize(before, Pen::default());
+                dst.pens.extend(std::iter::repeat_n(pen, added));
+            }
+        }
+    }
+}
+
+fn append_clipped_prim(dst: &mut DisplayList, src: &DisplayList, p: &DPrim, clip: &Clip) {
+    {
         let pts = src.points(p);
         match (p.kind, clip) {
             (Kind::Polyline, Clip::Rect(rect)) => {
@@ -1519,6 +1543,12 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
     if ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
         return;
     }
+    // XCLIP: the contents are built on their own, then clipped to the boundary.
+    let xclip = ins.clip.as_ref().filter(|c| c.enabled && c.boundary.len() >= 3);
+    let mut outer: Option<DisplayList> = None;
+    if xclip.is_some() {
+        outer = Some(std::mem::take(&mut b.list));
+    }
     if let Some(blk) = ctx.d.block(&ins.block) {
         let cols = ins.cols.clamp(1, 10_000);
         let rows = ins.rows.clamp(1, 10_000);
@@ -1541,6 +1571,43 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                     entity(b, &sub, be);
                 }
             }
+        }
+    }
+    if let (Some(c), Some(mut out)) = (xclip, outer) {
+        let inner = std::mem::take(&mut b.list);
+        let base = ctx.d.block(&ins.block).map_or(Vec2::ZERO, |blk| blk.base.xy());
+        let m = ctx.xf.then_before(ins.transform(base));
+        let ring: Vec<Vec2> = c.boundary.iter().map(|p| m.apply(*p)).collect();
+        let region = if c.inverted {
+            // Outside the boundary: a frame around everything, the boundary a hole in it.
+            let r = Bounds2::from_points(ring.iter().copied()).union(&inner.bounds);
+            let pad = r.width().max(r.height()).max(1.0);
+            let r = r.expand(pad);
+            let frame = vec![r.min, Vec2::new(r.max.x, r.min.y), r.max, Vec2::new(r.min.x, r.max.y)];
+            clip::PolyClip::rings(&[frame, ring])
+        } else {
+            clip::PolyClip::new(&ring)
+        };
+        out.expanded = out.expanded.saturating_add(inner.expanded);
+        match region {
+            Some(region) => {
+                // Plotted glyphs inside a clipped block are drawn as outlines.
+                let mut inner = inner;
+                inner.texts.clear();
+                append_clipped(&mut out, &inner, &Clip::Poly(&region), true);
+            }
+            None => append(&mut out, inner),
+        }
+        b.list = out;
+        // XCLIPFRAME: 0 hidden, 1 shown and plotted, 2 shown, not plotted.
+        let frame = ctx.d.header.i64("XCLIPFRAME", 2);
+        if frame == 1 || (frame == 2 && !b.plotting) {
+            let fm = Ctx { xf: m, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+            let mut pts: Vec<Vec2> = c.boundary.clone();
+            if let Some(f) = pts.first().copied() {
+                pts.push(f);
+            }
+            b.polyline(&fm, rgb, 0.0, &pts);
         }
     }
     if b.opts.text {

@@ -48,6 +48,7 @@ mod tolerance;
 mod trimextend;
 mod utility;
 mod view;
+mod xclip;
 
 pub mod curves;
 pub mod helpers;
@@ -192,6 +193,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(pipe::specs());
         v.extend(steel::specs());
         v.extend(express::specs());
+        v.extend(xclip::specs());
         v.extend(mleader_edit::specs());
         v.extend(annoscale::specs());
         v.extend(hatch::specs());

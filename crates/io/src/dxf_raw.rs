@@ -39,7 +39,7 @@ const MODELLED_KEYS: &[&str] = &[
 /// Extension dictionary entries not kept raw: dimension associativity (CADCraft reads and
 /// rewrites it), draw order and annotation scale contexts (written from their own models by the
 /// changes that model them; stale copies would contradict the drawing).
-const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER"];
+const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER", "ACAD_FILTER"];
 
 /// Applications whose xdata CADCraft reads and writes itself. `ACAD` holds dimension overrides
 /// (DSTYLE) on dimensions and dimension styles; elsewhere it is kept.
