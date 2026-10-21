@@ -445,7 +445,7 @@ $SKPOLY
   9
 $TDCREATE
  40
-2461333.9805324073
+2461335.658599537
   9
 $TDUCREATE
  40
@@ -453,7 +453,7 @@ $TDUCREATE
   9
 $TDUPDATE
  40
-2461333.9805324073
+2461335.658599537
   9
 $TDUUPDATE
  40
@@ -505,7 +505,7 @@ $SPLINESEGS
   9
 $HANDSEED
   5
-58
+59
   9
 $SURFTAB1
  70
@@ -889,7 +889,7 @@ $FINGERPRINTGUID
   9
 $VERSIONGUID
   2
-{A061D070-CEC0-4356-818E-7B0AD8298DD9}
+{AC865930-F722-4FBA-85ED-49B361D41C04}
   9
 $EXTNAMES
 290
@@ -1565,7 +1565,7 @@ LAYER
 100
 AcDbSymbolTable
  70
-12
+9
   0
 LAYER
   5
@@ -1725,94 +1725,6 @@ CONTINUOUS
   0
 LAYER
   5
-3B
-330
-1
-100
-AcDbSymbolTableRecord
-100
-AcDbLayerTableRecord
-  2
-\U+5916\U+5f62\U+7dda
- 70
-0
- 62
-7
-  6
-CONTINUOUS
-370
-30
-390
-13
-  0
-LAYER
-  5
-3C
-330
-1
-100
-AcDbSymbolTableRecord
-100
-AcDbLayerTableRecord
-  2
-\U+96a0\U+308c\U+7dda
- 70
-0
- 62
-3
-  6
-DASHEDX2
-370
-15
-390
-13
-  0
-LAYER
-  5
-3D
-330
-1
-100
-AcDbSymbolTableRecord
-100
-AcDbLayerTableRecord
-  2
-AM_0N
- 70
-0
- 62
-7
-  6
-CONTINUOUS
-370
-30
-390
-13
-  0
-LAYER
-  5
-3E
-330
-1
-100
-AcDbSymbolTableRecord
-100
-AcDbLayerTableRecord
-  2
-AM_7N
- 70
-0
- 62
-1
-  6
-CENTERX2
-370
-15
-390
-13
-  0
-LAYER
-  5
 3F
 330
 1
@@ -1830,6 +1742,28 @@ Cutline
 CONTINUOUS
 370
 9
+390
+13
+  0
+LAYER
+  5
+58
+330
+1
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+2-DIM
+ 70
+0
+ 62
+2
+  6
+Continuous
+370
+-3
 390
 13
   0
@@ -4913,7 +4847,7 @@ DictionaryVariables
 280
 0
   1
-1.4.5 @ 2026-10-19T16:31:58.403404+00:00
+1.4.5 @ 2026-10-21T08:48:23.155969+00:00
   0
 ENDSEC
   0

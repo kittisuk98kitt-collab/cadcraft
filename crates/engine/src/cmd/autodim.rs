@@ -998,30 +998,18 @@ fn run_autodim(s: &mut Session, p: &Value) -> Result<Value> {
         s.doc_mut()?.header.set_str("DIMSTYLE", &name);
     }
     let plan = plan_for(s, &hs, p)?;
-    let mut out: Vec<String> = Vec::new();
-    let ndims = plan.dims.len();
-    for k in plan.dims {
-        let h = s.add_entity(k)?;
-        s.last_dim = Some(h);
-        out.push(h.hex());
+    // Dimensions and notes go on the drawing's dimension layer (the company's "2-DIM") when it
+    // has one; the current layer is put back after.
+    let old_layer = s.doc()?.header.str("CLAYER", "0");
+    let dim_layer = s.doc()?.layers.iter().map(|l| l.name.clone()).find(|n| n.eq_ignore_ascii_case("2-DIM"));
+    if let Some(l) = &dim_layer {
+        s.doc_mut()?.header.set_str("CLAYER", l);
     }
-    let nnotes = plan.notes.len();
-    for (pts, text) in plan.notes {
-        let r = super::annotate::run_leader(
-            s,
-            &json!({ "points": pts.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>(), "text": text, "underline": true }),
-        )?;
-        if let Some(a) = r.get("handles").and_then(Value::as_array) {
-            out.extend(a.iter().filter_map(Value::as_str).map(str::to_string));
-        } else if let Some(h) = r.get("handle").and_then(Value::as_str) {
-            out.push(h.to_string());
-        }
+    let placed = place_plan(s, plan);
+    if dim_layer.is_some() {
+        s.doc_mut()?.header.set_str("CLAYER", &old_layer);
     }
-    let th = style_height(s)?;
-    for (at, text) in plan.labels {
-        let k = super::draw::make_text_to(s, at, None, &text, th, 0.0, (cadcraft_doc::HAlign::Center, cadcraft_doc::VAlign::Middle));
-        out.push(s.add_entity(k)?.hex());
-    }
+    let (out, ndims, nnotes) = placed?;
     s.echo(format!("AUTODIM: {ndims} dimension(s), {nnotes} note(s)."));
     let mut res = json!({ "handles": out, "dimensions": ndims, "notes": nnotes });
     if bool_or(p, "check", true) {
@@ -1264,4 +1252,33 @@ impl Interactive for DimCheckM {
             }
         }
     }
+}
+
+/// Adds a plan's dimensions, leader notes and labels; their handles and counts.
+fn place_plan(s: &mut Session, plan: Plan) -> Result<(Vec<String>, usize, usize)> {
+    let mut out: Vec<String> = Vec::new();
+    let ndims = plan.dims.len();
+    for k in plan.dims {
+        let h = s.add_entity(k)?;
+        s.last_dim = Some(h);
+        out.push(h.hex());
+    }
+    let nnotes = plan.notes.len();
+    for (pts, text) in plan.notes {
+        let r = super::annotate::run_leader(
+            s,
+            &json!({ "points": pts.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>(), "text": text, "underline": true }),
+        )?;
+        if let Some(a) = r.get("handles").and_then(Value::as_array) {
+            out.extend(a.iter().filter_map(Value::as_str).map(str::to_string));
+        } else if let Some(h) = r.get("handle").and_then(Value::as_str) {
+            out.push(h.to_string());
+        }
+    }
+    let th = style_height(s)?;
+    for (at, text) in plan.labels {
+        let k = super::draw::make_text_to(s, at, None, &text, th, 0.0, (cadcraft_doc::HAlign::Center, cadcraft_doc::VAlign::Middle));
+        out.push(s.add_entity(k)?.hex());
+    }
+    Ok((out, ndims, nnotes))
 }

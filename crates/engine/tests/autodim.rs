@@ -205,3 +205,21 @@ fn autodim_takes_only_what_lies_inside_the_rectangle() {
     assert!(s.running.is_none());
     assert!(s.doc().unwrap().model.len() > n0 + 10);
 }
+
+#[test]
+fn autodim_puts_dimensions_on_the_dim_layer() {
+    let mut s = Session::new();
+    s.execute("layer.new", &json!({ "name": "2-DIM", "color": 2, "current": false })).unwrap();
+    let hs = plate(&mut s);
+    let before = s.doc().unwrap().header.str("CLAYER", "0");
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    let d = s.doc().unwrap();
+    let mut dims = 0;
+    for h in r["handles"].as_array().unwrap() {
+        let e = d.entity(cadcraft_engine::doc::Handle::parse_hex(h.as_str().unwrap()).unwrap()).unwrap();
+        assert_eq!(e.common.layer, "2-DIM");
+        dims += usize::from(matches!(e.kind, EntityKind::Dimension(_)));
+    }
+    assert!(dims > 5);
+    assert_eq!(d.header.str("CLAYER", "0"), before);
+}
