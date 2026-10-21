@@ -679,3 +679,26 @@ fn dimradius_takes_a_polyline_arc_segment() {
     assert!((dm.defpt.xy().dist(Vec2::new(210.0, 50.0))).abs() < 1e-6, "{:?}", dm.defpt);
     assert!((dm.p15.xy().dist(Vec2::new(210.0, 50.0)) - 50.0).abs() < 1e-6);
 }
+
+#[test]
+fn typed_solid_makes_triangles_and_quads() {
+    let mut s = Session::new();
+    // A weld mark: a triangle (Enter at the fourth point), then Enter again to finish.
+    s.cmdline("SOLID 0,0 6,0 0,6 ").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    // A quad, then its next third and fourth points make a second one.
+    s.cmdline("SOLID 10,0 20,0 10,10 20,10 10,20 20,20 ").unwrap();
+    let d = s.doc().unwrap();
+    let solids: Vec<[cadcraft_geom::Vec3; 4]> = d
+        .model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Solid(x) => Some(x.corners),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(solids.len(), 3, "{solids:?}");
+    assert_eq!(solids[0][2], solids[0][3]);
+    assert_eq!(solids[2][0].xy(), Vec2::new(10.0, 10.0));
+}

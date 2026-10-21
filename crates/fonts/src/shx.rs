@@ -535,8 +535,13 @@ pub fn shape(fonts: &ShxPair, s: &str, height: f64, width_factor: f64, oblique: 
         spans.push((x, x + adv, under, over));
         x += adv;
     }
+    // The line's width is where its last character's strokes end, as AutoCAD measures shape-font
+    // text (not the advance, which adds the space after the last character).
+    let ink = out.strokes.iter().chain(out.glyphs.iter().flatten()).flatten().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let end = if ink.is_finite() { ink.min(x) } else { x };
+    let spans: Vec<(f64, f64, bool, bool)> = spans.into_iter().map(|(a, b, u, o)| (a, b.min(end.max(a)), u, o)).collect();
     out.strokes.extend(crate::decorations(&spans, h));
-    out.width = x.max(0.0);
+    out.width = end.max(0.0);
     out
 }
 
@@ -661,12 +666,15 @@ mod tests {
         assert_eq!(f.kind, Kind::Unifont);
         let pair = ShxPair { main: Some(Arc::new(f)), big: None };
         let sh = shape(&pair, "A", 6.0, 1.0, 0.0);
-        // The caret is 6 high (text height = "above") and the advance 7 (6 + 1).
+        // The caret is 6 high (text height = "above") and 6 wide: the line ends where its strokes
+        // do, not at the advance (7).
         let b = cadcraft_geom::Bounds2::from_points(sh.strokes.iter().flatten().copied());
         assert!((b.max.y - 6.0).abs() < 1e-9 && b.min.y.abs() < 1e-9, "{b:?}");
-        assert!((sh.width - 7.0).abs() < 1e-9, "{}", sh.width);
+        assert!((sh.width - 6.0).abs() < 1e-9, "{}", sh.width);
+        // Between characters the advance still counts: "AA" is 7 + 6.
+        assert!((shape(&pair, "AA", 6.0, 1.0, 0.0).width - 13.0).abs() < 1e-9);
         // Width factor and height scale it.
-        assert!((shape(&pair, "A", 3.0, 0.5, 0.0).width - 1.75).abs() < 1e-9);
+        assert!((shape(&pair, "A", 3.0, 0.5, 0.0).width - 1.5).abs() < 1e-9);
         // The circle: radius 2 round (2, 2).
         let o = shape(&pair, "O", 6.0, 1.0, 0.0);
         let ob = cadcraft_geom::Bounds2::from_points(o.strokes.iter().flatten().copied());

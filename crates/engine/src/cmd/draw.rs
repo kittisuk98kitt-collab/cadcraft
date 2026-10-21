@@ -71,6 +71,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["spl"])
             .params("{fit: [[x,y],...], closed?, knots?: chord|sqrt|uniform, startTangent?, endTangent? ([dx,dy]), tolerance?} | {control: [...], degree?} | {object: handle|true, handles?} (polyline to spline)")
             .interactive(|_| Ok(Box::new(SplineM::default()))),
+        CommandSpec::new("solid", "2D Solid", run_solid)
+            .alias(&["so"])
+            .params("{points: 3 or 4 [x,y] (in AutoCAD's order: the 3rd and 4th across from the 1st and 2nd)}")
+            .interactive(|_| Ok(Box::new(SolidM::default()))),
         CommandSpec::new("donut", "Donut", run_donut)
             .menu(&["Draw", "Donut"])
             .alias(&["do", "doughnut"])
@@ -291,6 +295,75 @@ fn donut(center: Vec2, inside: f64, outside: f64) -> EntityKind {
         pl.const_width = w;
     }
     k
+}
+
+/// A filled 2D solid from three or four corners, in AutoCAD's order (a fourth equal to the third
+/// makes a triangle).
+fn solid_of(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> EntityKind {
+    EntityKind::Solid(cadcraft_doc::Solid { corners: [a.to3(0.0), b.to3(0.0), c.to3(0.0), d.to3(0.0)] })
+}
+
+fn run_solid(s: &mut Session, p: &Value) -> Result<Value> {
+    let pts = points_param(p, "points").ok_or_else(|| bad("solid", "`points` (3 or 4) is required"))?;
+    let k = match pts.as_slice() {
+        [a, b, c] => solid_of(*a, *b, *c, *c),
+        [a, b, c, d] => solid_of(*a, *b, *c, *d),
+        _ => return Err(bad("solid", "`points` must hold 3 or 4 points")),
+    };
+    added(s.add_entity(k)?)
+}
+
+/// SOLID typed: first, second, third point, then a fourth (Enter: a triangle); it goes on with
+/// the next third and fourth points, the last edge being the next solid's first, until Enter.
+#[derive(Default)]
+struct SolidM {
+    pts: Vec<Vec2>,
+}
+
+impl Interactive for SolidM {
+    fn name(&self) -> &'static str {
+        "SOLID"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.pts.len() {
+            0 => Prompt::new("Specify first point", Accept::POINT),
+            1 => Prompt::new("Specify second point", Accept::POINT).base_opt(self.pts.first().copied()),
+            2 => Prompt::new("Specify third point", Accept::POINT),
+            _ => Prompt::new("Specify fourth point or <exit>", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Point(p) => {
+                self.pts.push(p);
+                s.last_point = p;
+                if let [a, b, c, d] = self.pts.as_slice() {
+                    let (a, b, c, d) = (*a, *b, *c, *d);
+                    s.add_entity(solid_of(a, b, c, d))?;
+                    self.pts = vec![c, d];
+                }
+                Ok(Step::Continue)
+            }
+            Input::Enter if self.pts.len() == 3 => {
+                if let [a, b, c] = self.pts.as_slice() {
+                    let (a, b, c) = (*a, *b, *c);
+                    s.add_entity(solid_of(a, b, c, c))?;
+                    self.pts = vec![c, c];
+                }
+                Ok(Step::Continue)
+            }
+            Input::Enter | Input::Cancel => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+        match self.pts.as_slice() {
+            [a] => vec![line(*a, c)],
+            [a, b] => vec![line(*a, *b), line(*b, c), line(c, *a)],
+            [a, b, d] => vec![solid_of(*a, *b, *d, c)],
+            _ => Vec::new(),
+        }
+    }
 }
 
 fn run_donut(s: &mut Session, p: &Value) -> Result<Value> {
