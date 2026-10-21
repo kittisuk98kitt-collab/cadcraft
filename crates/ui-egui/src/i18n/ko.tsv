@@ -1238,3 +1238,5 @@ menu	View	보기
 menu	Draw	그리기
 menu	Dimension	치수
 menu	Modify	수정
+	Auto Dimension	자동 치수
+	Check Dimensions	치수 검사

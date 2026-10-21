@@ -5,6 +5,8 @@ pub(crate) mod annoscale;
 mod annotate;
 mod array;
 mod audit;
+mod autodim;
+mod autodim_check;
 pub(crate) mod blocks;
 pub mod clipboard;
 pub mod constraints;
@@ -195,6 +197,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(steel::specs());
         v.extend(express::specs());
         v.extend(xclip::specs());
+        v.extend(autodim::specs());
         v.extend(classic::specs());
         v.extend(mleader_edit::specs());
         v.extend(annoscale::specs());
