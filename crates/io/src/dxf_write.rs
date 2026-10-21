@@ -417,7 +417,8 @@ fn attrib_common(d: &Drawing, e: &Entity, ins: &Insert, a: &Attrib) -> (Common, 
         .and_then(|b| b.entities.iter().find(|be| matches!(&be.kind, EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag))));
     let base = def.map(|de| de.common.clone()).unwrap_or_default();
     let mut c = a.props.over(&base);
-    if c.layer == "0" {
+    // Its own layer 0 stays; only a definition's layer 0 becomes the reference's.
+    if a.props.layer.is_none() && c.layer == "0" {
         c.layer.clone_from(&e.common.layer);
     }
     (c, base)
@@ -805,7 +806,10 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.p(10, dm.defpt);
             let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
             let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
-            w.p(11, if dm.user_text_pos { dm.text_mid } else { g.text_pos.to3(0.0) });
+            // A file's own text midpoint is kept (AutoCAD stores it before the DIMTAD shift);
+            // a dimension made here without one gets where the text is drawn.
+            let keep = dm.user_text_pos || dm.text_mid != Vec3::ZERO;
+            w.p(11, if keep { dm.text_mid } else { g.text_pos.to3(0.0) });
             let ty: i64 = match dm.kind {
                 DimKind::Linear { .. } => 0,
                 DimKind::Aligned => 1,
@@ -1069,7 +1073,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.f(45, v.view_height);
             // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
             // 340 entity, 131072 = off.
-            let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
+            let clip = v.clip.filter(|h| *h != e.handle && (d.entity(*h).is_some() || d.blocks.values().any(|b| b.entities.contains(*h))));
             let flags = 32768 | if v.locked { 16384 } else { 0 } | if clip.is_some() { 65536 } else { 0 } | if v.on { 0 } else { 131072 };
             w.i(90, flags);
             if let Some(h) = clip {

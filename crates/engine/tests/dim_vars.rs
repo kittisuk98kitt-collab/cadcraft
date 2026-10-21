@@ -102,12 +102,17 @@ fn new_variables_are_style_overrides_and_read_back() {
 
 #[test]
 fn fit_moves_text_or_arrows_outside() {
-    // 0.5 between the extension lines: the text "0.5000" doesn't fit, the arrows (2 × 0.18) do.
+    // 0.6 between the extension lines: the text "0.6000" doesn't fit, the arrows do (AutoCAD
+    // keeps them inside with more than a text gap to spare each side: 2 × (0.18 + 0.09) = 0.54).
     let mut s = Session::new();
+    linear(&mut s, 0.6);
+    let (_, g) = last_dim(&s);
+    assert!(g.text_pos.x > 0.6, "best fit: text outside, {:?}", g.text_pos);
+    assert!(covers(&g, 3.0, 0.3), "arrows inside: the line runs between them");
+    // 0.5 leaves no gap to spare: the arrows go outside too.
     linear(&mut s, 0.5);
     let (_, g) = last_dim(&s);
-    assert!(g.text_pos.x > 0.5, "best fit: text outside, {:?}", g.text_pos);
-    assert!(covers(&g, 3.0, 0.25), "arrows inside: the line runs between them");
+    assert!(!covers(&g, 3.0, 0.25));
     // DIMATFIT 0: both outside; no line between the extension lines without DIMTOFL.
     set(&mut s, "DIMATFIT", json!(0));
     linear(&mut s, 0.5);

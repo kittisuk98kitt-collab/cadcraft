@@ -1297,7 +1297,21 @@ impl EntityKind {
                 if let Some(c) = &mut t.columns {
                     c.scale(s);
                 }
-                t.rotation = cadcraft_geom::norm_angle(t.rotation + rot);
+                if mirror {
+                    // MIRRTEXT = 0: the box is mirrored and the text reads the right way round in
+                    // it, hanging from the mirrored attachment point.
+                    let d1 = m.apply_vec(Vec2::from_angle(t.rotation));
+                    let flip = d1.x < -1e-9 || (d1.x.abs() <= 1e-9 && d1.y < 0.0);
+                    let dir = if flip { -d1 } else { d1 };
+                    t.rotation = cadcraft_geom::norm_angle(dir.angle());
+                    if (1..=9).contains(&t.attach) {
+                        let (row, col) = ((t.attach - 1) / 3, (t.attach - 1) % 3);
+                        let (row, col) = if flip { (row, 2 - col) } else { (2 - row, col) };
+                        t.attach = row * 3 + col + 1;
+                    }
+                } else {
+                    t.rotation = cadcraft_geom::norm_angle(t.rotation + rot);
+                }
             }
             EntityKind::Insert(i) => {
                 t3(&mut i.insert);
@@ -1310,7 +1324,7 @@ impl EntityKind {
                     i.rotation = cadcraft_geom::norm_angle(rot - (i.rotation - rot));
                 }
                 for a in &mut i.attribs {
-                    transform_text(&mut a.text, m, s, rot, false);
+                    transform_text(&mut a.text, m, s, rot, mirror);
                     a.transform_multiline(m);
                 }
                 i.col_spacing *= s;
@@ -1485,6 +1499,21 @@ impl EntityKind {
 }
 
 fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool) {
+    // MIRRTEXT = 0 (the default): mirrored text keeps reading left to right. AutoCAD mirrors the
+    // text's box and sets the text in it the right way round: across a vertical line the
+    // justification swaps left for right, across a horizontal one the text drops by its height
+    // (or swaps top for bottom) so it stays where the mirrored box is.
+    let (dir1, flip_dir) = if mirror {
+        let d1 = m.apply_vec(Vec2::from_angle(t.rotation));
+        let flip = d1.x < -1e-9 || (d1.x.abs() <= 1e-9 && d1.y < 0.0);
+        (Some(if flip { -d1 } else { d1 }), flip)
+    } else {
+        (None, false)
+    };
+    let two = matches!(t.halign, HAlign::Aligned | HAlign::Fit);
+    let left_base = t.halign == HAlign::Left && t.valign == VAlign::Baseline;
+    // The point the text hangs on: the insertion point for left/baseline text, else the
+    // alignment point (Align/Fit: both).
     let q = m.apply(t.insert.xy());
     t.insert.x = q.x;
     t.insert.y = q.y;
@@ -1494,6 +1523,47 @@ fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool) {
         a.y = q.y;
     }
     t.height *= s;
-    // MIRRTEXT = 0 (the default): mirrored text keeps reading left to right.
-    t.rotation = cadcraft_geom::norm_angle(t.rotation + if mirror { 0.0 } else { rot });
+    let Some(dir) = dir1 else {
+        t.rotation = cadcraft_geom::norm_angle(t.rotation + rot);
+        return;
+    };
+    t.rotation = cadcraft_geom::norm_angle(dir.angle());
+    let up = dir.normalized().perp();
+    if flip_dir {
+        if two {
+            if let Some(a) = &mut t.align_pt {
+                std::mem::swap(a, &mut t.insert);
+            }
+            return;
+        }
+        let jp = if left_base { t.insert } else { t.align_pt.unwrap_or(t.insert) };
+        t.halign = match t.halign {
+            HAlign::Left => HAlign::Right,
+            HAlign::Right => HAlign::Left,
+            h => h,
+        };
+        t.insert = jp;
+        t.align_pt = if t.halign == HAlign::Left && t.valign == VAlign::Baseline { None } else { Some(jp) };
+    } else {
+        // Upside down across the line: the baseline goes to the bottom of the mirrored box.
+        let drop = |p: &mut Vec3, h: f64| {
+            p.x -= up.x * h;
+            p.y -= up.y * h;
+        };
+        let h = t.height;
+        match t.valign {
+            VAlign::Top => t.valign = VAlign::Bottom,
+            VAlign::Bottom => t.valign = VAlign::Top,
+            VAlign::Middle => {}
+            VAlign::Baseline => {
+                drop(&mut t.insert, h);
+                if let Some(a) = &mut t.align_pt {
+                    drop(a, h);
+                }
+            }
+        }
+        if t.halign == HAlign::Left && t.valign == VAlign::Baseline {
+            t.align_pt = None;
+        }
+    }
 }

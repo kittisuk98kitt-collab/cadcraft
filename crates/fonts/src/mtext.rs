@@ -324,6 +324,11 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                             j += 1;
                         }
                         i = j + 1;
+                        // `^ ` is how a tolerance stack is typed ("+0.1^ -0.2"): the space belongs
+                        // to the separator, not to the lower value.
+                        if sep == Some('^') && bottom.starts_with(' ') {
+                            bottom.remove(0);
+                        }
                         word.push((Seg::Stack(top, bottom, sep.unwrap_or('/')), cur));
                     }
                     'f' | 'F' => {
@@ -807,6 +812,14 @@ mod tests {
         assert!(max > 0.0 && min < -1.0, "{min}..{max}");
         // Narrower than the two digits side by side at full size.
         assert!(l.bounds.width() < crate::line_width("12", 1.0, 1.0));
+    }
+
+    #[test]
+    fn tolerance_stack_space_is_part_of_the_separator() {
+        // "+1^ 0" (as typed for a tolerance) draws like AutoCAD's "+1^0".
+        let a = lay("\\S+1^ 0;", 0.0);
+        let b = lay("\\S+1^0;", 0.0);
+        assert_eq!(a.strokes, b.strokes);
     }
 
     #[test]

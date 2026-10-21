@@ -325,33 +325,69 @@ pub(crate) fn justify(j: &str) -> Option<(HAlign, VAlign)> {
     })
 }
 
-pub(crate) fn make_text(s: &Session, at: Vec2, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> EntityKind {
+/// A TEXT in the current style (its width factor and obliquing angle, as AutoCAD gives new
+/// text). Align and Fit run along the baseline `at`..`end`.
+pub(crate) fn make_text_to(s: &Session, at: Vec2, end: Option<Vec2>, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> EntityKind {
     let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+    let (width_factor, oblique) = s
+        .doc()
+        .ok()
+        .and_then(|d| {
+            d.text_style(&style).map(|t| (if t.width_factor > 0.0 && t.width_factor.is_finite() { t.width_factor } else { 1.0 }, t.oblique))
+        })
+        .unwrap_or((1.0, 0.0));
     let (h, v) = j;
     let left = h == HAlign::Left && v == VAlign::Baseline;
+    let two = matches!(h, HAlign::Aligned | HAlign::Fit);
+    let end = end.filter(|e| two && !e.near(at, 1e-12));
+    let rotation = end.map(|e| at.angle_to(e)).unwrap_or(rotation);
     EntityKind::Text(Text {
         insert: v3(at),
-        align_pt: if left { None } else { Some(v3(at)) },
+        align_pt: if left {
+            None
+        } else if two {
+            Some(v3(end.unwrap_or(at + Vec2::from_angle(rotation) * (height * value.chars().count().max(1) as f64))))
+        } else {
+            Some(v3(at))
+        },
         height,
         value: value.into(),
         rotation,
-        width_factor: 1.0,
-        oblique: 0.0,
+        width_factor,
+        oblique,
         style,
         halign: h,
         valign: v,
     })
 }
 
+/// The fixed height of the current text style (0 = asked for).
+fn style_height(s: &Session) -> f64 {
+    s.doc()
+        .ok()
+        .and_then(|d| d.text_style(&d.header.str("TEXTSTYLE", "Standard")).map(|t| t.height))
+        .filter(|h| *h > 0.0 && h.is_finite())
+        .unwrap_or(0.0)
+}
+
 fn run_text(s: &mut Session, p: &Value) -> Result<Value> {
     let at = point_req("text", p, "at")?;
     let text = str_param(p, "text").ok_or_else(|| bad("text", "`text` is required"))?;
-    let height = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
+    if let Some(st) = str_param(p, "style") {
+        let name = s.doc()?.text_style(st).map(|t| t.name.clone()).ok_or_else(|| bad("text", format!("no text style \"{st}\"")))?;
+        s.doc_mut()?.header.set_str("TEXTSTYLE", &name);
+    }
+    let fixed = style_height(s);
+    let height = f64_or(p, "height", if fixed > 0.0 { fixed } else { s.doc()?.header.f64("TEXTSIZE", 0.2) });
     if height <= 0.0 {
         return Err(bad("text", "height must be positive"));
     }
     let j = justify(str_param(p, "justify").unwrap_or("L")).ok_or_else(|| bad("text", "unknown justification"))?;
-    let k = make_text(s, at, text, height, f64_or(p, "rotation", 0.0).to_radians(), j);
+    let end = point_param(p, "end");
+    if matches!(j.0, HAlign::Aligned | HAlign::Fit) && end.is_none_or(|e| e.near(at, 1e-12)) {
+        return Err(bad("text", "Align and Fit need `end`, the second endpoint of the baseline"));
+    }
+    let k = make_text_to(s, at, end, text, height, f64_or(p, "rotation", 0.0).to_radians(), j);
     added(s.add_entity(k)?)
 }
 
@@ -1433,10 +1469,13 @@ impl Interactive for DonutM {
 
 struct TextM {
     at: Option<Vec2>,
+    /// Align / Fit: the second endpoint of the baseline.
+    end: Option<Vec2>,
     height: Option<f64>,
     rotation: Option<f64>,
     justify: (HAlign, VAlign),
     asking_justify: bool,
+    asking_style: bool,
     line: usize,
     /// Run by a LISP routine (`command`): one line of text ends the command, as AutoLISP's
     /// `command` runs TEXT; typed and in scripts each line asks for the next.
@@ -1447,12 +1486,37 @@ impl TextM {
     fn new(s: &Session) -> Self {
         TextM {
             at: None,
+            end: None,
             height: None,
             rotation: None,
             justify: (HAlign::Left, VAlign::Baseline),
             asking_justify: false,
+            asking_style: false,
             line: 0,
             single_line: s.lisp_running(),
+        }
+    }
+    fn two_point(&self) -> bool {
+        matches!(self.justify.0, HAlign::Aligned | HAlign::Fit)
+    }
+    /// Fill in what the style or the justification decides instead of a prompt.
+    fn settle(&mut self, s: &Session) {
+        if self.at.is_none() || (self.two_point() && self.end.is_none()) {
+            return;
+        }
+        if self.height.is_none() {
+            let fixed = style_height(s);
+            if fixed > 0.0 {
+                self.height = Some(fixed);
+            } else if self.justify.0 == HAlign::Aligned {
+                // Align scales the height with the baseline.
+                self.height = Some(s.doc().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2));
+            }
+        }
+        if self.rotation.is_none()
+            && let (Some(a), Some(e)) = (self.at, self.end)
+        {
+            self.rotation = Some(a.angle_to(e));
         }
     }
 }
@@ -1467,10 +1531,31 @@ impl Interactive for TextM {
             return Prompt::new("Enter an option", Accept::TEXT)
                 .kw(&["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"]);
         }
-        match (self.at, self.height, self.rotation) {
-            (None, _, _) => Prompt::new("Specify start point of text", Accept::POINT).kw(&["Justify", "Style"]),
-            (Some(a), None, _) => Prompt::new("Specify height", Accept::POINT_OR_NUMBER).default(format!("{th:.4}")).base(a),
-            (Some(a), Some(_), None) => Prompt::new("Specify rotation angle of text", Accept::POINT_OR_NUMBER).default("0").base(a),
+        if self.asking_style {
+            let cur = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+            return Prompt::new("Enter style name", Accept::TEXT).kw(&["?"]).default(cur);
+        }
+        let first = match self.justify {
+            (HAlign::Aligned | HAlign::Fit, _) => "Specify first endpoint of text baseline",
+            (HAlign::Center, VAlign::Baseline) => "Specify center point of text",
+            (HAlign::Right, VAlign::Baseline) => "Specify right endpoint of text baseline",
+            (HAlign::Middle, _) => "Specify middle point of text",
+            (HAlign::Left, VAlign::Baseline) => "Specify start point of text",
+            (HAlign::Left, VAlign::Top) => "Specify top-left point of text",
+            (HAlign::Center, VAlign::Top) => "Specify top-center point of text",
+            (HAlign::Right, VAlign::Top) => "Specify top-right point of text",
+            (HAlign::Left, VAlign::Middle) => "Specify middle-left point of text",
+            (HAlign::Center, VAlign::Middle) => "Specify middle point of text",
+            (HAlign::Right, VAlign::Middle) => "Specify middle-right point of text",
+            (HAlign::Left, VAlign::Bottom) => "Specify bottom-left point of text",
+            (HAlign::Center, VAlign::Bottom) => "Specify bottom-center point of text",
+            (HAlign::Right, VAlign::Bottom) => "Specify bottom-right point of text",
+        };
+        match (self.at, self.end, self.height, self.rotation) {
+            (None, _, _, _) => Prompt::new(first, Accept::POINT).kw(&["Justify", "Style"]),
+            (Some(a), None, _, _) if self.two_point() => Prompt::new("Specify second endpoint of text baseline", Accept::POINT).base(a),
+            (Some(a), _, None, _) => Prompt::new("Specify height", Accept::POINT_OR_NUMBER).default(format!("{th:.4}")).base(a),
+            (Some(a), _, Some(_), None) => Prompt::new("Specify rotation angle of text", Accept::POINT_OR_NUMBER).default("0").base(a),
             _ => Prompt::new("Enter text", Accept::TEXT),
         }
     }
@@ -1493,34 +1578,64 @@ impl Interactive for TextM {
             self.asking_justify = false;
             return Ok(Step::Continue);
         }
+        if self.asking_style {
+            match &i {
+                Input::Keyword(k) | Input::Text(k) if k.trim() == "?" => {
+                    let names: Vec<String> = s.doc()?.text_styles.iter().map(|t| t.name.clone()).collect();
+                    s.echo(format!("Text styles: {}", names.join(", ")));
+                }
+                Input::Keyword(k) | Input::Text(k) => {
+                    let name = s.doc()?.text_style(k.trim()).map(|t| t.name.clone());
+                    match name {
+                        Some(n) => {
+                            s.doc_mut()?.header.set_str("TEXTSTYLE", &n);
+                            self.asking_style = false;
+                        }
+                        None => return Err(crate::EngineError::Other(format!("Cannot find text style \"{}\".", k.trim()))),
+                    }
+                }
+                Input::Enter => self.asking_style = false,
+                _ => {}
+            }
+            return Ok(Step::Continue);
+        }
         let th = s.doc()?.header.f64("TEXTSIZE", 0.2);
-        match (self.at, self.height, self.rotation, i) {
-            (None, _, _, Input::Keyword(k)) if k == "Justify" => self.asking_justify = true,
-            (None, _, _, Input::Point(p)) => self.at = Some(p),
-            (Some(_), None, _, Input::Enter) => self.height = Some(th),
-            (Some(a), None, _, Input::Point(p)) => self.height = Some(a.dist(p).max(1e-9)),
-            (Some(_), None, _, Input::Text(t)) => {
+        let two = self.two_point();
+        match (self.at, self.end, self.height, self.rotation, i) {
+            (None, _, _, _, Input::Keyword(k)) if k == "Justify" => self.asking_justify = true,
+            (None, _, _, _, Input::Keyword(k)) if k == "Style" => self.asking_style = true,
+            (None, _, _, _, Input::Point(p)) => self.at = Some(p),
+            (Some(a), None, _, _, Input::Point(p)) if two => {
+                if p.near(a, 1e-12) {
+                    return Err(crate::EngineError::Other("The baseline endpoints must differ.".into()));
+                }
+                self.end = Some(p);
+            }
+            (Some(_), _, None, _, Input::Enter) => self.height = Some(th),
+            (Some(a), _, None, _, Input::Point(p)) => self.height = Some(a.dist(p).max(1e-9)),
+            (Some(_), _, None, _, Input::Text(t)) => {
                 let h = number(&t).filter(|h| *h > 0.0).ok_or_else(|| crate::EngineError::Other("Requires a positive height.".into()))?;
                 self.height = Some(h);
                 s.doc_mut()?.header.set_f64("TEXTSIZE", h);
             }
-            (Some(_), Some(_), None, Input::Enter) => self.rotation = Some(0.0),
-            (Some(a), Some(_), None, Input::Point(p)) => self.rotation = Some(a.angle_to(p)),
-            (Some(_), Some(_), None, Input::Text(t)) => {
+            (Some(_), _, Some(_), None, Input::Enter) => self.rotation = Some(0.0),
+            (Some(a), _, Some(_), None, Input::Point(p)) => self.rotation = Some(a.angle_to(p)),
+            (Some(_), _, Some(_), None, Input::Text(t)) => {
                 self.rotation = Some(s.angle_settings().direction(&t).ok_or_else(|| crate::EngineError::Other("Requires an angle.".into()))?)
             }
-            (Some(a), Some(h), Some(r), Input::Text(t)) => {
-                let at = a + Vec2::from_angle(r - std::f64::consts::FRAC_PI_2) * (h * 5.0 / 3.0 * self.line as f64);
-                let k = make_text(s, at, &t, h, r, self.justify);
+            (Some(a), e, Some(h), Some(r), Input::Text(t)) => {
+                let down = Vec2::from_angle(r - std::f64::consts::FRAC_PI_2) * (h * 5.0 / 3.0 * self.line as f64);
+                let k = make_text_to(s, a + down, e.map(|e| e + down), &t, h, r, self.justify);
                 s.add_entity(k)?;
                 self.line += 1;
                 if self.single_line {
                     return Ok(Step::Done);
                 }
             }
-            (Some(_), Some(_), Some(_), Input::Enter) => return Ok(Step::Done),
+            (Some(_), _, Some(_), Some(_), Input::Enter) => return Ok(Step::Done),
             _ => {}
         }
+        self.settle(s);
         Ok(Step::Continue)
     }
 }

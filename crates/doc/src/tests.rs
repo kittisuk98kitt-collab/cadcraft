@@ -569,3 +569,41 @@ fn space_names_its_tab() {
     assert_eq!(p.layout(), Some("Sheet A"));
     assert_eq!(p.tab_name(), "Sheet A");
 }
+
+/// MIRRTEXT 0: mirrored text reads the right way round inside the mirrored box, as AutoCAD sets
+/// it (a mirrored balloon's attribute drops by its height instead of hanging above the line).
+#[test]
+fn mirrored_text_keeps_its_box() {
+    let text = |at: (f64, f64)| {
+        EntityKind::Text(Text {
+            insert: Vec3::new(at.0, at.1, 0.0),
+            align_pt: None,
+            height: 10.0,
+            value: "ABC".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: HAlign::Left,
+            valign: VAlign::Baseline,
+        })
+    };
+    // Across a horizontal line: same reading direction, baseline one height lower.
+    let mut k = text((0.0, 50.0));
+    k.transform(&Mat3::mirror(Vec2::new(-100.0, -100.0), Vec2::new(100.0, -100.0)));
+    let EntityKind::Text(t) = &k else { panic!() };
+    assert!((t.insert.y + 260.0).abs() < 1e-9 && t.rotation.abs() < 1e-9 && t.halign == HAlign::Left, "{t:?}");
+    // Across a vertical line: right-justified at the mirrored start point, not upside down.
+    let mut k = text((0.0, 50.0));
+    k.transform(&Mat3::mirror(Vec2::new(-100.0, -100.0), Vec2::new(-100.0, 100.0)));
+    let EntityKind::Text(t) = &k else { panic!() };
+    assert_eq!(t.halign, HAlign::Right);
+    assert!(t.rotation.abs() < 1e-9);
+    assert!(t.align_pt.is_some_and(|a| (a.x + 200.0).abs() < 1e-9 && (a.y - 50.0).abs() < 1e-9));
+    // MTEXT: reads left to right, hanging from the mirrored corner.
+    let mut k: EntityKind = serde_json::from_value(serde_json::json!({"type": "mText", "insert": {"x": 0.0, "y": 0.0, "z": 0.0}, "height": 10.0, "width": 100.0, "attach": 1, "rotation": 0.0, "style": "Standard", "contents": "ABC", "lineSpacing": 1.0})).unwrap();
+    k.transform(&Mat3::mirror(Vec2::new(-100.0, -100.0), Vec2::new(-100.0, 100.0)));
+    let EntityKind::MText(m) = &k else { panic!() };
+    assert_eq!(m.attach, 3);
+    assert!(m.rotation.abs() < 1e-9);
+}

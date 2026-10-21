@@ -86,6 +86,7 @@ mod native {
         let mut doc = outcome.document;
         table_merges(&mut doc);
         table_style_rows(&mut doc, false);
+        older_dim_vars(&mut doc);
         let mut out = CappedWriter { buf: Vec::new(), limit: limits.max_dxf_bytes, exceeded: false };
         let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)))
             .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
@@ -235,6 +236,22 @@ mod native {
                         cell.merge_height = if first { span(bottom - r.top_row) } else { 0 };
                     }
                 }
+            }
+        }
+    }
+
+    /// DIMFXL and DIMJOGANG came with AutoCAD 2007: older DWG files have no field for them and
+    /// acadrust leaves 0, where AutoCAD's defaults are 1 and 45°.
+    fn older_dim_vars(doc: &mut acadrust::CadDocument) {
+        if doc.version >= acadrust::DxfVersion::AC1021 {
+            return;
+        }
+        for ds in doc.dim_styles.iter_mut() {
+            if ds.dimfxl == 0.0 {
+                ds.dimfxl = 1.0;
+            }
+            if ds.dimjogang == 0.0 {
+                ds.dimjogang = std::f64::consts::FRAC_PI_4;
             }
         }
     }

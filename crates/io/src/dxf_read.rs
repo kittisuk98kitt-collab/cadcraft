@@ -505,7 +505,15 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             let u = t.p(11);
             let v = t.p(12);
             // Clip vertices are in pixel space: origin at the image's top-left corner, y pointing down.
-            let pts: Vec<Vec2> = t.pts(14).into_iter().map(|q| o.xy() + u.xy() * (q.x + 0.5) + v.xy() * (0.5 - q.y)).collect();
+            let mut pts: Vec<Vec2> = t.pts(14).into_iter().map(|q| o.xy() + u.xy() * (q.x + 0.5) + v.xy() * (0.5 - q.y)).collect();
+            if let [a, b] = pts[..] {
+                // Rectangular boundary (type 1): two opposite corners.
+                pts = vec![a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)];
+            }
+            // A polygonal boundary repeats its first vertex at the end; the model keeps it open.
+            if pts.len() > 3 && pts.first().zip(pts.last()).is_some_and(|(f, l)| f.near(*l, 1e-9)) {
+                pts.pop();
+            }
             EntityKind::Wipeout(Wipeout { boundary: pts })
         }
         // The file path comes from the IMAGEDEF object (`dxf_image::resolve`).
@@ -1839,8 +1847,62 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
     }
     crate::dxf_xclip::read(&secs, &mut d);
     crate::dxf_raw::read(&secs, &mut d);
+    placed_dim_text(&mut d);
     d.skipped_records = skipped;
     Ok(d)
+}
+
+/// AutoCAD keeps a linear dimension's text where it was dragged along the line even when the
+/// file doesn't flag it as placed (DIMTMOVE 0): the text in the dimension's block is then away
+/// from the default spot. Such text counts as placed here, at the block's text, so editing the
+/// dimension keeps it there as AutoCAD does instead of jumping back to the default.
+fn placed_dim_text(d: &mut Drawing) {
+    let dimscale = d.header.f64("DIMSCALE", 1.0);
+    let mut found: Vec<(Option<usize>, Handle, Vec3)> = Vec::new();
+    let spaces: Vec<(Option<usize>, &cadcraft_doc::EntityStore)> =
+        std::iter::once((None, &d.model)).chain(d.layouts.iter().enumerate().map(|(i, l)| (Some(i), &l.entities))).collect();
+    for (sp, store) in spaces {
+        for e in store.iter() {
+            let EntityKind::Dimension(dm) = &e.kind else { continue };
+            if dm.user_text_pos || dm.text_mid == Vec3::ZERO || !matches!(dm.kind, DimKind::Linear { .. } | DimKind::Aligned) {
+                continue;
+            }
+            let Some(blk) = dm.block.as_ref().and_then(|b| d.block(b)) else { continue };
+            let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+            if st.text_move != 0 || st.text_just != 0 {
+                continue;
+            }
+            let Some(mt) = blk.entities.iter().find_map(|x| if let EntityKind::MText(m) = &x.kind { Some(m.clone()) } else { None }) else {
+                continue;
+            };
+            if mt.attach != 5 {
+                continue;
+            }
+            let g = cadcraft_render::dimension_geometry(dm, &st, dimscale);
+            let th = g.text_height.max(1e-9);
+            if mt.insert.xy().dist(g.text_pos) > 0.3 * th && mt.insert.is_finite() {
+                found.push((sp, e.handle, mt.insert));
+            }
+        }
+    }
+    for (sp, h, at) in found {
+        let f = |e: &mut Entity| {
+            if let EntityKind::Dimension(dm) = &mut e.kind {
+                dm.text_mid = at;
+                dm.user_text_pos = true;
+            }
+        };
+        match sp {
+            None => {
+                d.model.modify(h, f);
+            }
+            Some(i) => {
+                if let Some(l) = d.layouts.get_mut(i) {
+                    l.entities.modify(h, f);
+                }
+            }
+        }
+    }
 }
 
 fn count_skipped(skipped: &mut std::collections::BTreeMap<String, usize>, section: &str, n: usize) {
