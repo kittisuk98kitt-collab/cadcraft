@@ -17,18 +17,38 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
         return vec![pts.to_vec()];
     }
     let pattern: Vec<f64> = lt.pattern.iter().map(|d| d.length * scale).collect();
-    // AutoCAD centres the pattern so lines start and end with a dash: start at half the first dash.
     let mut out: Vec<Vec<Vec2>> = Vec::new();
     let mut cur: Vec<Vec2> = Vec::new();
+    // Where along the pattern the run starts. A single straight segment (a line) is laid out
+    // around its middle, as drafted centre lines are: the pattern's shortest dash (CENTER's and
+    // PHANTOM's short dash) sits on the midpoint, so a hole's centre lines cross on their short
+    // dashes and both ends look alike. Other runs start at the pattern's start.
+    let phase = match (pts, centre_of_short_dash(&pattern)) {
+        ([a, b], Some(c)) => (c - a.dist(*b) / 2.0).rem_euclid(total),
+        _ => 0.0,
+    };
+    // The element the run starts in, and how much of it is left.
     let mut idx = 0usize;
-    let first = pattern.first().copied().unwrap_or(0.0);
-    let mut remaining = if first > 0.0 { first } else { first.abs() };
+    let mut skipped = 0.0;
+    let mut remaining = 0.0;
+    for (k, d) in pattern.iter().enumerate().filter(|_| phase > 0.0) {
+        if skipped + d.abs() > phase || k + 1 == pattern.len() {
+            idx = k;
+            remaining = (skipped + d.abs() - phase).max(0.0);
+            break;
+        }
+        skipped += d.abs();
+    }
+    let first = pattern.get(idx).copied().unwrap_or(0.0);
+    if phase == 0.0 {
+        remaining = first.abs();
+    }
     let mut on = first >= 0.0;
     if on && first == 0.0 {
         if let Some(p) = pts.first() {
             out.push(vec![*p]);
         }
-        idx = 1 % pattern.len();
+        idx = (idx + 1) % pattern.len();
         let n = pattern.get(idx).copied().unwrap_or(0.0);
         remaining = n.abs();
         on = n > 0.0;
@@ -83,6 +103,24 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
     out
 }
 
+/// The middle of the pattern's shortest dash, as a distance from the pattern's start, when its
+/// dashes differ in length (a centre or phantom line); `None` for evenly dashed patterns.
+fn centre_of_short_dash(pattern: &[f64]) -> Option<f64> {
+    let dashes = || pattern.iter().copied().filter(|d| *d > 0.0);
+    let (lo, hi) = (dashes().fold(f64::INFINITY, f64::min), dashes().fold(0.0, f64::max));
+    if !(lo.is_finite() && hi > lo * 1.2) {
+        return None;
+    }
+    let mut pos = 0.0;
+    for d in pattern {
+        if *d > 0.0 && (*d - lo).abs() <= 1e-12 * hi.max(1.0) {
+            return Some(pos + d / 2.0);
+        }
+        pos += d.abs();
+    }
+    None
+}
+
 /// The dashes of the pattern along a run of length `len`, as (start, end) distances; a dot has
 /// start == end. Laid out like [`apply`]. `None` when the run is drawn continuous: the scaled
 /// pattern is shorter than `min_pattern` or would repeat too often.
@@ -118,6 +156,26 @@ mod tests {
         assert_eq!(d.len(), 4);
         assert!((d[0][1].x - 0.5).abs() < 1e-9);
         assert!((d[1][0].x - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn centre_line_is_laid_out_around_its_middle() {
+        // CENTER: long 1.25, gap 0.25, short 0.25, gap 0.25.
+        let lt = Linetype::simple("CENTER", "", &[1.25, -0.25, 0.25, -0.25]);
+        for len in [0.7, 3.0, 7.3, 20.0] {
+            let d = apply(&[Vec2::ZERO, Vec2::new(len, 0.0)], &lt, 1.0, 0.0);
+            let mid = len / 2.0;
+            // The short dash is centred on the midpoint.
+            let m = d.iter().find(|r| r[0].x <= mid && r[r.len() - 1].x >= mid).expect("a dash at the middle");
+            assert!((m[0].x - (mid - 0.125)).abs() < 1e-9 && (m[m.len() - 1].x - (mid + 0.125)).abs() < 1e-9, "{len}: {m:?}");
+            // Both ends alike.
+            let (a, z) = (d.first().unwrap(), d.last().unwrap());
+            assert!((a[0].x - (len - z[z.len() - 1].x)).abs() < 1e-9);
+            assert!(((a[a.len() - 1].x - a[0].x) - (z[z.len() - 1].x - z[0].x)).abs() < 1e-9, "{len}");
+        }
+        // A polyline still starts on the pattern's start.
+        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0), Vec2::new(3.0, 3.0)], &lt, 1.0, 0.0);
+        assert!((d[0][1].x - 1.25).abs() < 1e-9);
     }
 
     #[test]
