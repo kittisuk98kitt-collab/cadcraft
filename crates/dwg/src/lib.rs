@@ -87,6 +87,7 @@ mod native {
         table_merges(&mut doc);
         table_style_rows(&mut doc, false);
         older_dim_vars(&mut doc);
+        current_names(&mut doc);
         let mut out = CappedWriter { buf: Vec::new(), limit: limits.max_dxf_bytes, exceeded: false };
         let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)))
             .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
@@ -100,6 +101,48 @@ mod native {
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
         Ok((add_header_vars(out.buf, &doc.header), notes))
+    }
+
+    /// After reading a DWG: the current layer, text style and dimension style by name, from the
+    /// handles the DWG header keeps (the reader leaves the names at their defaults).
+    fn current_names(doc: &mut acadrust::CadDocument) {
+        let h = &doc.header;
+        let layer = doc.layers.iter().find(|l| !h.current_layer_handle.is_null() && l.handle == h.current_layer_handle).map(|l| l.name.clone());
+        let text = doc
+            .text_styles
+            .iter()
+            .find(|t| !h.current_text_style_handle.is_null() && t.handle == h.current_text_style_handle)
+            .map(|t| t.name.clone());
+        let dim =
+            doc.dim_styles.iter().find(|d| !h.current_dimstyle_handle.is_null() && d.handle == h.current_dimstyle_handle).map(|d| d.name.clone());
+        if let Some(n) = layer {
+            doc.header.current_layer_name = n;
+        }
+        if let Some(n) = text {
+            doc.header.current_text_style_name = n;
+        }
+        if let Some(n) = dim {
+            doc.header.current_dimstyle_name = n;
+        }
+    }
+
+    /// Before writing a DWG: the header's current layer, text style and dimension style handles,
+    /// from the names the DXF gives (the DWG keeps only the handles).
+    fn current_handles(doc: &mut acadrust::CadDocument) {
+        let h = &doc.header;
+        let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+        let layer = doc.layers.iter().find(|l| same(&l.name, &h.current_layer_name)).map(|l| l.handle);
+        let text = doc.text_styles.iter().find(|t| same(&t.name, &h.current_text_style_name)).map(|t| t.handle);
+        let dim = doc.dim_styles.iter().find(|d| same(&d.name, &h.current_dimstyle_name)).map(|d| d.handle);
+        if let Some(x) = layer.filter(|x| !x.is_null()) {
+            doc.header.current_layer_handle = x;
+        }
+        if let Some(x) = text.filter(|x| !x.is_null()) {
+            doc.header.current_text_style_handle = x;
+        }
+        if let Some(x) = dim.filter(|x| !x.is_null()) {
+            doc.header.current_dimstyle_handle = x;
+        }
     }
 
     /// Most record types named in the skipped-records note.
@@ -415,6 +458,7 @@ mod native {
             None => {}
         }
         table_style_rows(&mut doc, true);
+        current_handles(&mut doc);
         drop_unwritable(&mut doc);
         std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DwgWriter::write_to_vec(&doc)))
             .map_err(|_| "the DWG writer failed on this drawing".to_string())?

@@ -25,6 +25,8 @@ fn settings_option_asks_for_the_dialog() {
 #[test]
 fn three_points_then_width_and_lines() {
     let mut s = Session::new();
+    // The plain layout (this edition underlines by default).
+    s.qleader.underline = false;
     typed(&mut s, &["qleader", "0,0", "10,10", "20,10", "", "HELLO", "WORLD", ""]);
     assert!(s.running.is_none());
     let k = kinds(&s);
@@ -55,6 +57,7 @@ fn settings_drive_the_leader() {
 #[test]
 fn text_on_the_left_uses_the_left_attachment() {
     let mut s = Session::new();
+    s.qleader.underline = false;
     s.execute("qleader.settings", &json!({ "promptWidth": false, "attachLeft": 2, "frame": true })).unwrap();
     typed(&mut s, &["qleader", "0,0", "-10,10", "", "A", ""]);
     let k = kinds(&s);

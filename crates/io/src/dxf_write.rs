@@ -1297,11 +1297,17 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
     let style = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
     let g = cadcraft_render::dimension_in(d, dm);
     let mut out = Vec::new();
+    // Each part in its style colour (DIMCLRD, DIMCLRE, DIMCLRT), as AutoCAD writes the block
+    // that it and other readers draw; the style's ByBlock stays ByBlock.
     let c = Common { layer: layer.into(), color: Color::ByBlock, ..Common::default() };
-    for l in &g.lines {
+    let dim_c = Common { color: style.dim_line_color, ..c.clone() };
+    let ext_c = Common { color: style.ext_line_color, ..c.clone() };
+    let roles = g.line_roles.iter().chain(std::iter::repeat(&cadcraft_render::LineRole::Dim));
+    for (l, role) in g.lines.iter().zip(roles) {
+        let lc = if matches!(role, cadcraft_render::LineRole::Ext) { &ext_c } else { &dim_c };
         for seg in l.windows(2) {
             if let [a, b] = seg {
-                out.push(Entity { handle: Handle(0), common: c.clone(), kind: EntityKind::Line(Line { a: a.to3(0.0), b: b.to3(0.0) }) });
+                out.push(Entity { handle: Handle(0), common: lc.clone(), kind: EntityKind::Line(Line { a: a.to3(0.0), b: b.to3(0.0) }) });
             }
         }
     }
@@ -1309,7 +1315,7 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
         if let [a, b, cc] = t.as_slice() {
             out.push(Entity {
                 handle: Handle(0),
-                common: c.clone(),
+                common: dim_c.clone(),
                 kind: EntityKind::Solid(Solid { corners: [a.to3(0.0), b.to3(0.0), cc.to3(0.0), cc.to3(0.0)] }),
             });
         }
@@ -1317,7 +1323,7 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
     if !g.value.is_empty() {
         out.push(Entity {
             handle: Handle(0),
-            common: c,
+            common: Common { color: style.text_color, ..c },
             kind: EntityKind::MText(MText {
                 insert: g.text_pos.to3(0.0),
                 height: g.text_height,

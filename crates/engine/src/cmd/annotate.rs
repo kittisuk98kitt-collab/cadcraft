@@ -474,11 +474,13 @@ fn run_mleader(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 
-/// LEADER typed: points until Enter (at least two), then the annotation text (Enter for none).
+/// LEADER typed: points until Enter (at least two), then the annotation text a line at a time,
+/// as AutoCAD asks it: an empty first line for no text, an empty next line to finish.
 #[derive(Default)]
 struct LeaderM {
     pts: Vec<Vec2>,
     asking_text: bool,
+    lines: Vec<String>,
 }
 
 impl LeaderM {
@@ -498,8 +500,10 @@ impl Interactive for LeaderM {
         "LEADER"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        if self.asking_text {
-            Prompt::new("Enter annotation text <none>", Accept::TEXT)
+        if self.asking_text && self.lines.is_empty() {
+            Prompt::new("Enter first line of annotation text <none>", Accept::TEXT)
+        } else if self.asking_text {
+            Prompt::new("Enter next line of annotation text", Accept::TEXT)
         } else if self.pts.is_empty() {
             Prompt::new("Specify leader start point", Accept::POINT)
         } else {
@@ -509,9 +513,14 @@ impl Interactive for LeaderM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if self.asking_text {
             return match i {
-                Input::Text(t) => self.finish(s, Some(&t)),
-                Input::Keyword(t) => self.finish(s, Some(&t)),
-                Input::Enter => self.finish(s, None),
+                Input::Text(t) | Input::Keyword(t) if !t.trim().is_empty() && self.lines.len() < 1000 => {
+                    self.lines.push(t);
+                    Ok(Step::Continue)
+                }
+                Input::Text(_) | Input::Keyword(_) | Input::Enter => {
+                    let text = self.lines.join("\\P");
+                    self.finish(s, Some(&text))
+                }
                 Input::Cancel => Ok(Step::Done),
                 _ => Ok(Step::Continue),
             };

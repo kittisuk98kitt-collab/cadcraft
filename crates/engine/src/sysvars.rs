@@ -313,6 +313,21 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             s.doc_mut()?.header.set_f64("ANGBASE", cadcraft_geom::norm_angle(a));
         }
         "CONSTRAINTINFER" => s.doc_mut()?.parametric.settings.infer = as_bool(v).ok_or_else(bad)?,
+        // The current layer: an existing, thawed layer (its own spelling is kept).
+        "CLAYER" => {
+            let typed = match v {
+                Value::String(t) => t.trim().to_string(),
+                Value::Number(x) => x.to_string(),
+                _ => return Err(bad()),
+            };
+            let d = s.doc_mut()?;
+            let l = d.layer(&typed).ok_or_else(|| EngineError::BadParams { cmd: "setvar".into(), msg: format!("no layer \"{typed}\"") })?;
+            if l.frozen {
+                return Err(EngineError::BadParams { cmd: "setvar".into(), msg: format!("layer \"{}\" is frozen", l.name) });
+            }
+            let name = l.name.clone();
+            d.header.set(&n, cadcraft_doc::HVal::Str(name));
+        }
         _ => {
             if let Some(r) = table::set(s, &n, v) {
                 return r;

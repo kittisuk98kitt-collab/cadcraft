@@ -630,3 +630,32 @@ fn moving_leader_text_takes_the_landing_along() {
     let EntityKind::Leader(l2) = &s.doc().unwrap().entity(ld).unwrap().kind else { panic!() };
     assert!((l2.vertices[0].x - 5.0).abs() < 1e-9);
 }
+
+#[test]
+fn typed_leader_takes_lines_until_an_empty_one() {
+    let mut s = Session::new();
+    s.cmdline("LEADER 0,0 20,20 25,20 ").unwrap();
+    s.cmdline("4-M10").unwrap();
+    s.cmdline("THRU").unwrap();
+    // Still asking: an empty line finishes.
+    assert!(s.running.is_some());
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    let d = s.doc().unwrap();
+    let m = d.model.iter().find_map(|e| match &e.kind {
+        EntityKind::MText(m) => Some(m.contents.clone()),
+        _ => None,
+    });
+    assert_eq!(m.as_deref(), Some("4-M10\\PTHRU"));
+}
+
+#[test]
+fn typed_clayer_sets_the_current_layer() {
+    let mut s = Session::new();
+    s.execute("layer.new", &json!({ "name": "CENTER" })).unwrap();
+    s.cmdline("CLAYER center").unwrap();
+    assert_eq!(s.doc().unwrap().header.str("CLAYER", ""), "CENTER");
+    // A layer that isn't there is refused, and the current layer stays.
+    let _ = s.cmdline("CLAYER NOPE");
+    assert_eq!(s.doc().unwrap().header.str("CLAYER", ""), "CENTER");
+}

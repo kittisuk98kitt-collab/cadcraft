@@ -710,7 +710,9 @@ impl Default for QLeaderSettings {
             angle2: 0,
             attach_left: 3,
             attach_right: 1,
-            underline: false,
+            // Kitt Edition: the company's leaders put the text on the line (QLEADER's
+            // "Underline bottom line").
+            underline: true,
         }
     }
 }

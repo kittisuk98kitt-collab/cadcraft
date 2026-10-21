@@ -22,7 +22,6 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{name, on?, frozen?, locked?, plot?, color?, linetype?, lineweight?, transparency?, description?, newVpFreeze?, plotStyle? (named plot style), newName?}"),
         CommandSpec::new("layer.current", "Make Current", run_current)
             .menu(&["Format", "Layer Tools", "Make Current"])
-            .alias(&["clayer"])
             .params("{name}"),
         CommandSpec::new("layer.delete", "Delete Layer", run_delete).params("{name}"),
         CommandSpec::new("laymcur", "Make Object's Layer Current", run_laymcur).params("{handles?}"),

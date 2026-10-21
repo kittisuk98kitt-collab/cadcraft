@@ -591,7 +591,9 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let tvp = if st.text_above == 0 && st.text_vertical_pos.is_finite() { st.text_vertical_pos } else { 0.0 };
             let centred = st.text_above == 0 && tvp.abs() < 0.7;
             let text_need = if centred { 2.0 * (extent(inside_ang) + gap) } else { 2.0 * extent(inside_ang) };
-            let fits = !has_text || meas >= text_need + 2.0 * aw;
+            // Text centred in the line shares it with the arrowheads; text above or below the
+            // line (DIMTAD 1-4) only needs its own width, the arrowheads their own room.
+            let fits = !has_text || if centred { meas >= text_need + 2.0 * aw } else { meas >= text_need && arrows_fit };
             let text_fits = !has_text || meas >= text_need;
             let just = st.text_just.min(4);
             // DIMATFIT / DIMTIX: what goes outside the extension lines when text and arrows
@@ -1301,6 +1303,39 @@ mod tests {
         let d = lin((0.0, 0.0), (0.5, 0.0), (0.0, 5.0), 0.0);
         let g = dimension_geometry(&d, &DimStyle::default(), 1.0);
         assert!(g.text_pos.x > 0.5, "text beyond the second extension line: {}", g.text_pos.x);
+    }
+
+    #[test]
+    fn text_above_the_line_stays_inside_when_it_and_the_arrows_each_fit() {
+        // Company style "2": text 3.5 above the line, arrows 3, scale 2. A 25 gap has room for
+        // the text and, separately, for the arrows: both stay inside (as AutoCAD draws it).
+        let st = st_with(|s| {
+            s.text_above = 1;
+            s.text_height = 3.5;
+            s.arrow_size = 3.0;
+            s.text_gap = 1.0;
+            s.scale = 2.0;
+            s.fit = 3;
+            s.text_inside_horizontal = false;
+            s.text_outside_horizontal = false;
+            s.decimals = 0;
+        });
+        let d = lin((0.0, 0.0), (25.0, 0.0), (0.0, 10.0), 0.0);
+        let g = dimension_geometry(&d, &st, 1.0);
+        assert!(g.text_pos.x > 0.0 && g.text_pos.x < 25.0, "text inside: {}", g.text_pos.x);
+        // Centred text (DIMTAD 0) shares the line with the arrows and still goes out.
+        let st0 = st_with(|s| {
+            s.text_above = 0;
+            s.text_height = 3.5;
+            s.arrow_size = 3.0;
+            s.text_gap = 1.0;
+            s.scale = 2.0;
+            s.fit = 3;
+            s.decimals = 0;
+        });
+        let d = lin((0.0, 0.0), (12.0, 0.0), (0.0, 10.0), 0.0);
+        let g0 = dimension_geometry(&d, &st0, 1.0);
+        assert!(g0.text_pos.x > 12.0 || g0.text_pos.x < 0.0, "{}", g0.text_pos.x);
     }
 
     #[test]
