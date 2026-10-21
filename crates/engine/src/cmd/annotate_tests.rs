@@ -659,3 +659,23 @@ fn typed_clayer_sets_the_current_layer() {
     let _ = s.cmdline("CLAYER NOPE");
     assert_eq!(s.doc().unwrap().header.str("CLAYER", ""), "CENTER");
 }
+
+#[test]
+fn dimradius_takes_a_polyline_arc_segment() {
+    let mut s = Session::new();
+    // A plate with an R50 end: the arc is a bulge segment of the outline.
+    s.cmdline("PLINE 10,0 210,0 A CE 210,50 210,100 L 10,100 0,90 0,10 C").unwrap();
+    s.cmdline("DIMRADIUS 245.36,85.36 270,110").unwrap();
+    assert!(s.running.is_none());
+    let d = s.doc().unwrap();
+    let dm = d
+        .model
+        .iter()
+        .find_map(|e| match &e.kind {
+            EntityKind::Dimension(dm) if matches!(dm.kind, DimKind::Radius) => Some(dm.clone()),
+            _ => None,
+        })
+        .expect("radius dimension");
+    assert!((dm.defpt.xy().dist(Vec2::new(210.0, 50.0))).abs() < 1e-6, "{:?}", dm.defpt);
+    assert!((dm.p15.xy().dist(Vec2::new(210.0, 50.0)) - 50.0).abs() < 1e-6);
+}

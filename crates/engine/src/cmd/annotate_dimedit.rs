@@ -329,7 +329,7 @@ impl Interactive for JoggedM {
             return Ok(Step::Continue);
         }
         match (self.circle, self.center, self.at, i) {
-            (None, _, _, Input::Point(p)) => match pick_at(s, p).and_then(|h| circle_of(s, h)) {
+            (None, _, _, Input::Point(p)) => match pick_at(s, p).and_then(|h| super::annotate::circle_near(s, h, Some(p))) {
                 Some(t) => self.circle = Some(t),
                 None => s.echo("Object selected is not a circle or arc."),
             },

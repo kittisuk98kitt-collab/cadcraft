@@ -236,9 +236,28 @@ fn run_aligned(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Centre and radius of a circle/arc entity.
 fn circle_of(s: &Session, h: Handle) -> Option<(Vec2, f64)> {
+    circle_near(s, h, None)
+}
+
+/// The circle or arc `h` is, or, for a polyline, its arc segment nearest `near` (the pick point;
+/// the first arc segment without one), as AutoCAD dimensions a polyline's arcs.
+pub(super) fn circle_near(s: &Session, h: Handle, near: Option<Vec2>) -> Option<(Vec2, f64)> {
     match &s.doc().ok()?.entity(h)?.kind {
         EntityKind::Circle(c) => Some((c.center.xy(), c.radius)),
         EntityKind::Arc(a) => Some((a.center.xy(), a.radius)),
+        EntityKind::LwPolyline(pl) => {
+            let n = pl.vertices.len();
+            let segs = if pl.closed { n } else { n.saturating_sub(1) };
+            let arcs = (0..segs.min(100_000)).filter_map(|i| {
+                let (a, b) = (pl.vertices.get(i)?, pl.vertices.get((i + 1) % n)?);
+                let (arc, _) = cadcraft_geom::bulge_to_arc(a.p, b.p, a.bulge)?;
+                Some((arc.center, arc.radius))
+            });
+            match near {
+                Some(q) => arcs.min_by(|x, y| (q.dist(x.0) - x.1).abs().total_cmp(&(q.dist(y.0) - y.1).abs())),
+                None => arcs.into_iter().next(),
+            }
+        }
         _ => None,
     }
 }
@@ -1322,7 +1341,7 @@ impl Interactive for RadialM {
         }
         match (self.target, i) {
             (None, Input::Point(p)) => {
-                match pick_at(s, p).and_then(|h| circle_of(s, h)) {
+                match pick_at(s, p).and_then(|h| circle_near(s, h, Some(p))) {
                     Some(t) => self.target = Some(t),
                     None => s.echo("Object selected is not a circle or arc."),
                 }
