@@ -26,6 +26,7 @@ pub fn qnew_template() -> String {
 /// Set QNEWTEMPLATE; "" or "." clears it. The file is read when a drawing is made from it.
 pub fn set_qnew_template(path: &str) {
     let p = path.trim();
+    let p = if p == BUILTIN_OLD { BUILTIN } else { p };
     *default_template() = if p == "." { String::new() } else { p.to_string() };
 }
 
@@ -65,8 +66,11 @@ pub(super) fn run_new(s: &mut Session, p: &Value) -> Result<Option<Value>> {
 }
 
 /// The built-in default template's name (QNEWTEMPLATE): this edition's company standard —
-/// layers, linetypes, text and dimension styles (ALSYS current), millimetres.
-pub const BUILTIN: &str = "<ALSYS default>";
+/// layers, linetypes, text and dimension styles (style "5" current, DIMSCALE 5), millimetres.
+pub const BUILTIN: &str = "<Kitt default>";
+
+/// The built-in template's earlier name, still in saved settings: read as [`BUILTIN`].
+const BUILTIN_OLD: &str = "<ALSYS default>";
 
 const BUILTIN_DXF: &[u8] = include_bytes!("../../../../../assets/kitt/default-template.dxf");
 
@@ -78,7 +82,7 @@ pub fn builtin_drawing() -> Option<Drawing> {
 
 /// Read a template drawing through the io hooks (DWG content for `.dwt`, or DXF).
 fn read_template(path: &str) -> Result<Drawing> {
-    if path == BUILTIN {
+    if path == BUILTIN || path == BUILTIN_OLD {
         return builtin_drawing().ok_or_else(|| bad("new", "the built-in template could not be read"));
     }
     let hooks = io().ok_or_else(|| bad("new", "file formats are not available in this build"))?;

@@ -189,7 +189,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     p.rect_filled(tpl, 0.0, Color32::from_gray(222));
     let mut tui = ui.new_child(egui::UiBuilder::new().max_rect(tpl.shrink2(vec2(6.0, 2.0))));
     egui::ComboBox::from_id_salt("start_templates").width(tpl.width() - 14.0).selected_text(crate::tl!("Templates")).show_ui(&mut tui, |ui| {
-        if ui.button(crate::tl!("ALSYS default (mm)")).clicked() {
+        if ui.button(crate::tl!("Kitt default (mm)")).clicked() {
             action = Some(("new", json!({ "template": cadcraft_engine::cmd::file::template::BUILTIN })));
         }
         if ui.button(crate::tl!("Metric, no template (acadiso)")).clicked() {
