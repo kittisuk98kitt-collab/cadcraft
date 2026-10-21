@@ -198,6 +198,15 @@ pub(super) fn stretched(s: &Session, hot: &[(Handle, usize)], others: &[Handle],
                 changed = true;
             }
         }
+        // A dimension's text moved by its grip: with DIMTMOVE 0 (keep dim line with text) the
+        // dimension line follows the text, in the preview as on release.
+        if changed
+            && let (EntityKind::Dimension(dm), EntityKind::Dimension(old)) = (&mut k, &e.kind)
+            && dm.text_mid != old.text_mid
+        {
+            let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+            st.follow_text(dm, d.header.f64("DIMSCALE", 1.0));
+        }
         if changed {
             out.push((h, k));
         }

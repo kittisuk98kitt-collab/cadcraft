@@ -785,9 +785,10 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             let need_y = if d.y > 0.0 && above { (bounds.max.y + top_reach + th - k0.y).max(0.0) } else { 0.0 };
             reach += need_x.max(need_y) * std::f64::consts::SQRT_2;
             let w = th * (0.8 * text.chars().count() as f64 + 1.0);
+            // The text sits on the leader's landing, which runs on under it.
             let text_box = |knee: Vec2| {
                 let x0 = if d.x < 0.0 { knee.x - w - th } else { knee.x };
-                Bounds2::new(Vec2::new(x0, knee.y - th * 0.8), Vec2::new(x0 + w + th, knee.y + th * 0.8))
+                Bounds2::new(Vec2::new(x0, knee.y - th * 0.3), Vec2::new(x0 + w + th, knee.y + th * 1.6))
             };
             let overlaps = |a: &Bounds2, b: &Bounds2| a.min.x < b.max.x && b.min.x < a.max.x && a.min.y < b.max.y && b.min.y < a.max.y;
             let mut knee = tip + d * reach;
@@ -1006,7 +1007,10 @@ fn run_autodim(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let nnotes = plan.notes.len();
     for (pts, text) in plan.notes {
-        let r = super::annotate::run_leader(s, &json!({ "points": pts.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>(), "text": text }))?;
+        let r = super::annotate::run_leader(
+            s,
+            &json!({ "points": pts.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>(), "text": text, "underline": true }),
+        )?;
         if let Some(a) = r.get("handles").and_then(Value::as_array) {
             out.extend(a.iter().filter_map(Value::as_str).map(str::to_string));
         } else if let Some(h) = r.get("handle").and_then(Value::as_str) {

@@ -628,7 +628,12 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     let underline = flag("underline", def.underline) && !lines.is_empty();
     let hook_end = pts.last().copied().unwrap_or_default();
     if underline {
-        let w = if width > 0.0 { width } else { lines.iter().map(|l| cadcraft_fonts::line_width(l, th, 1.0)).fold(0.0, f64::max) };
+        // Measured in the text style's own font (a shape font is wider or narrower than ours).
+        let (font, wf) = match s.doc()?.text_style(&ds.text_style) {
+            Some(ts) => (cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font), ts.width_factor),
+            None => (cadcraft_fonts::TextFont::Stroke, 1.0),
+        };
+        let w = if width > 0.0 { width } else { lines.iter().map(|l| cadcraft_fonts::text_width(&font, l, th, wf)).fold(0.0, f64::max) };
         pts.push(hook_end + Vec2::new(dir * (w + 2.0 * gap), 0.0));
     }
     let arrow_name = p.get("arrow").and_then(Value::as_str).unwrap_or("").trim().to_string();

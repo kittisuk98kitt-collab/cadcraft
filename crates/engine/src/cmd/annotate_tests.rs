@@ -588,3 +588,22 @@ fn text_movement_override_brings_the_dim_line_to_moved_text() {
     assert!(dm.defpt.y > 10.0 && dm.defpt.y <= 12.0 + 1e-9, "{:?}", dm.defpt);
     assert_eq!(dm.overrides.get("textMove"), Some(&json!(0)));
 }
+
+#[test]
+fn dragging_dim_text_grip_takes_the_dim_line_along() {
+    // The hot-grip drag (preview and release) with DIMTMOVE 0: the line follows the text,
+    // which may also slide along the line.
+    let mut s = Session::new();
+    let d = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 2] })).unwrap());
+    s.execute("dimoverride", &json!({ "handles": [d.hex()], "DIMTMOVE": 0 })).unwrap();
+    let from = dim(&s, d).text_mid.xy();
+    let moved = crate::cmd::gripcmds::stretched(&s, &[(d, 3)], &[d], cadcraft_geom::Vec2::new(3.0, 6.0));
+    let Some((_, cadcraft_doc::EntityKind::Dimension(dm))) = moved.first() else { panic!("no edit") };
+    assert!((dm.text_mid.x - (from.x + 3.0)).abs() < 1e-9);
+    assert!(dm.defpt.y > 2.0 + 3.0 && dm.defpt.y <= from.y + 6.0 + 1e-9, "{:?}", dm.defpt);
+    // DIMTMOVE 1: the line stays.
+    s.execute("dimoverride", &json!({ "handles": [d.hex()], "DIMTMOVE": 1 })).unwrap();
+    let moved = crate::cmd::gripcmds::stretched(&s, &[(d, 3)], &[d], cadcraft_geom::Vec2::new(3.0, 6.0));
+    let Some((_, cadcraft_doc::EntityKind::Dimension(dm))) = moved.first() else { panic!("no edit") };
+    assert!((dm.defpt.y - 2.0).abs() < 1e-9);
+}
