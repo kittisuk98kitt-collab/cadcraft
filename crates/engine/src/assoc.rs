@@ -342,7 +342,98 @@ pub fn after_command(s: &mut crate::Session, before: Option<&Arc<Drawing>>, uid:
         && !Arc::ptr_eq(before, &st.doc)
     {
         update(&mut st.doc, before);
+        follow_leader_text(&mut st.doc, before);
         notes = crate::cmd::hatch::refill_associative(&mut st.doc, before);
     }
     notes.into_iter().for_each(|n| s.echo(n));
+}
+
+/// Texts moved by a command at most this many at a time take their leaders along.
+const MAX_MOVED_TEXTS: usize = 2000;
+
+/// A leader's landing follows its text: when a TEXT or MTEXT is moved (its content unchanged)
+/// and a leader that was not moved itself ends at it, the leader's landing (its last
+/// horizontal run of vertices) moves with the text, as AutoCAD's leader keeps to its
+/// annotation. The arrowhead stays where it points. Returns the leaders changed.
+pub fn follow_leader_text(after: &mut Arc<Drawing>, before: &Drawing) -> usize {
+    // (old box, move) of every moved text.
+    let mut moved: Vec<(cadcraft_geom::Bounds2, Vec2)> = Vec::new();
+    let mut leaders: Vec<(Handle, Vec<Vec3>)> = Vec::new();
+    {
+        let d: &Drawing = after;
+        let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities));
+        for store in stores {
+            for e in store.iter() {
+                let Some(old) = before.entity(e.handle) else { continue };
+                if Arc::ptr_eq(old, e) || moved.len() >= MAX_MOVED_TEXTS {
+                    continue;
+                }
+                let delta = match (&old.kind, &e.kind) {
+                    (EntityKind::MText(a), EntityKind::MText(b)) if a.contents == b.contents && a.height == b.height => b.insert.xy() - a.insert.xy(),
+                    (EntityKind::Text(a), EntityKind::Text(b)) if a.value == b.value && a.height == b.height => b.insert.xy() - a.insert.xy(),
+                    _ => continue,
+                };
+                if delta.len() < 1e-12 || !delta.is_finite() {
+                    continue;
+                }
+                let bx = cadcraft_doc::entity_bounds(before, old, 0);
+                if bx.is_empty() {
+                    continue;
+                }
+                let th = match &old.kind {
+                    EntityKind::MText(m) => m.height,
+                    EntityKind::Text(t) => t.height,
+                    _ => 0.0,
+                };
+                // Room for the gap and the landing under or beside the text.
+                let r = th.abs().max(1e-9);
+                moved.push((cadcraft_geom::Bounds2::new(bx.min - Vec2::new(r, r), bx.max + Vec2::new(r, r)), delta));
+            }
+        }
+        if moved.is_empty() {
+            return 0;
+        }
+        let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities));
+        for store in stores {
+            for e in store.iter() {
+                let EntityKind::Leader(l) = &e.kind else { continue };
+                // A leader moved or edited by the command itself is left as it is.
+                if before.entity(e.handle).is_none_or(|o| !Arc::ptr_eq(o, e) && o.kind != e.kind) {
+                    continue;
+                }
+                let n = l.vertices.len();
+                let Some(last) = l.vertices.last().map(|v| v.xy()) else { continue };
+                if n < 2 {
+                    continue;
+                }
+                let Some((_, delta)) = moved.iter().find(|(b, _)| b.contains(last)) else { continue };
+                // The landing: the trailing vertices level with the last one (never the arrow tip).
+                let y = last.y;
+                let tol = 1e-6 * (1.0 + y.abs());
+                let mut first = n - 1;
+                while first > 1 && l.vertices.get(first - 1).is_some_and(|v| (v.y - y).abs() <= tol) {
+                    first -= 1;
+                }
+                let mut vs = l.vertices.clone();
+                for v in vs.iter_mut().skip(first) {
+                    v.x += delta.x;
+                    v.y += delta.y;
+                }
+                leaders.push((e.handle, vs));
+            }
+        }
+    }
+    let n = leaders.len();
+    if n == 0 {
+        return 0;
+    }
+    let d = Arc::make_mut(after);
+    for (h, vs) in leaders {
+        let _ = d.modify_entity(h, |e| {
+            if let EntityKind::Leader(l) = &mut e.kind {
+                l.vertices = vs;
+            }
+        });
+    }
+    n
 }

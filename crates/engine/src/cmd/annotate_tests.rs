@@ -607,3 +607,26 @@ fn dragging_dim_text_grip_takes_the_dim_line_along() {
     let Some((_, cadcraft_doc::EntityKind::Dimension(dm))) = moved.first() else { panic!("no edit") };
     assert!((dm.defpt.y - 2.0).abs() < 1e-9);
 }
+
+#[test]
+fn moving_leader_text_takes_the_landing_along() {
+    let mut s = Session::new();
+    let r = s.execute("leader", &json!({ "points": [[0, 0], [10, 10]], "text": "16DRILL", "underline": true })).unwrap();
+    let hs: Vec<Handle> = r["handles"].as_array().unwrap().iter().map(|v| Handle::parse_hex(v.as_str().unwrap()).unwrap()).collect();
+    let (ld, txt) = (hs[0], hs[1]);
+    let before = match &s.doc().unwrap().entity(ld).unwrap().kind {
+        EntityKind::Leader(l) => l.vertices.clone(),
+        _ => panic!(),
+    };
+    s.execute("move", &json!({ "handles": [txt.hex()], "from": [0, 0], "to": [0, -8] })).unwrap();
+    let EntityKind::Leader(l) = &s.doc().unwrap().entity(ld).unwrap().kind else { panic!() };
+    // The arrow tip stays; the landing (the level run at the end) comes down with the text.
+    assert_eq!(l.vertices[0], before[0]);
+    let n = l.vertices.len();
+    assert!((l.vertices[n - 1].y - (before[n - 1].y - 8.0)).abs() < 1e-9, "{:?}", l.vertices);
+    assert!((l.vertices[n - 2].y - (before[n - 2].y - 8.0)).abs() < 1e-9);
+    // Moving the leader with its text moves both as they are.
+    s.execute("move", &json!({ "handles": [txt.hex(), ld.hex()], "from": [0, 0], "to": [5, 0] })).unwrap();
+    let EntityKind::Leader(l2) = &s.doc().unwrap().entity(ld).unwrap().kind else { panic!() };
+    assert!((l2.vertices[0].x - 5.0).abs() < 1e-9);
+}
