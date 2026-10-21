@@ -28,6 +28,35 @@ fn main() {
     if let Err(e) = std::fs::write(&out, src) {
         println!("cargo::error=writing {}: {e}", out.display());
     }
+    shx_fonts();
+}
+
+/// Embeds the `.shx` files of `CRAFT_SHX_DIR` (the user's own shape fonts, for a personal
+/// build; never part of the source) as `SHX_FONTS`. Unset, it is empty.
+fn shx_fonts() {
+    println!("cargo::rerun-if-env-changed=CRAFT_SHX_DIR");
+    let mut src = String::from("/// Shape fonts built in (`CRAFT_SHX_DIR`): file name and contents.\npub static SHX_FONTS: &[(&str, &[u8])] = &[\n");
+    if let Some(dir) = std::env::var_os("CRAFT_SHX_DIR").filter(|d| !d.is_empty()).map(PathBuf::from) {
+        println!("cargo::rerun-if-changed={}", dir.display());
+        match std::fs::read_dir(&dir) {
+            Ok(rd) => {
+                let mut files: Vec<PathBuf> =
+                    rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("shx"))).collect();
+                files.sort();
+                for p in files {
+                    let Ok(abs) = p.canonicalize() else { continue };
+                    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    let _ = writeln!(src, "    ({name:?}, include_bytes!({:?})),", abs.display().to_string());
+                }
+            }
+            Err(e) => println!("cargo::warning=CRAFT_SHX_DIR={}: {e}", dir.display()),
+        }
+    }
+    src.push_str("];\n");
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_default()).join("shx_fonts.rs");
+    if let Err(e) = std::fs::write(&out, src) {
+        println!("cargo::error=writing {}: {e}", out.display());
+    }
 }
 
 /// Family-name prefixes AGENTS.md bars (no Adobe fonts, ever): Adobe's Source families and Noto

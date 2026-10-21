@@ -16,6 +16,7 @@
 pub mod bidi;
 mod complex;
 mod mtext;
+pub mod shx;
 mod stroke;
 pub mod subset;
 pub mod ttf;
@@ -263,6 +264,9 @@ pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
 /// Width of the gap MTEXT leaves between two words. Words are measured without their trailing
 /// letter gap, so the stroke font's gap is added on both sides of the space, as TEXT lays it out.
 pub fn space_width(font: &TextFont, height: f64, width_factor: f64) -> f64 {
+    if let TextFont::Shx(pair) = font {
+        return shx::width(pair, " ", height, width_factor);
+    }
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, " ", height, width_factor)
     {
@@ -278,6 +282,8 @@ pub enum TextFont {
     #[default]
     Stroke,
     Outline(ttf::Face),
+    /// Shape fonts (`.shx`) the user has: a main font and/or a big font.
+    Shx(shx::ShxPair),
 }
 
 impl TextFont {
@@ -285,6 +291,18 @@ impl TextFont {
     /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
     /// else the stroke font.
     pub fn resolve(name: &str) -> TextFont {
+        TextFont::resolve_style(name, "")
+    }
+    /// Resolve a text style's font and big font: shape fonts (`txt.shx` + `bigfont.shx`) when
+    /// the files are available, else as [`TextFont::resolve`].
+    pub fn resolve_style(name: &str, big_font: &str) -> TextFont {
+        let n = name.trim();
+        let shx_name = n.to_ascii_lowercase().ends_with(".shx") || !n.contains('.');
+        let main = if shx_name { shx::find(n) } else { None };
+        let big = if big_font.trim().is_empty() { None } else { shx::find(big_font) };
+        if main.is_some() || (big.is_some() && ttf::find(name).is_none()) {
+            return TextFont::Shx(shx::ShxPair { main, big });
+        }
         if let Some(f) = ttf::find(name) {
             return TextFont::Outline(f);
         }
@@ -410,6 +428,9 @@ pub(crate) fn decorations(spans: &[(f64, f64, bool, bool)], h: f64) -> Vec<Vec<V
 /// Shape one line in `font` (baseline at y = 0, x from 0). TrueType fonts that fail to parse
 /// fall back to the stroke font.
 pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
+    if let TextFont::Shx(pair) = font {
+        return shx::shape(pair, s, height, width_factor, oblique);
+    }
     if let TextFont::Outline(face) = font
         && let Some(sh) = ttf::shape(face, s, height, width_factor, oblique)
     {
@@ -420,6 +441,9 @@ pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, obli
 
 /// Width of one line in `font`.
 pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f64 {
+    if let TextFont::Shx(pair) = font {
+        return shx::width(pair, s, height, width_factor);
+    }
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, s, height, width_factor)
     {

@@ -496,9 +496,27 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     if let Some((c, r)) = disc {
         pts.extend([c + Vec2::new(r, 0.0), c - Vec2::new(r, 0.0), c + Vec2::new(0.0, r), c - Vec2::new(0.0, r)]);
     }
-    let hole_pts: Vec<Vec2> = holes.iter().flat_map(|h| h.centres.clone()).collect();
+    // A hole's extension line starts where the draftsman picks it: the end of its centre line
+    // (the top end for an X position, the right end for a Y one); the centre when it has none.
+    let centre_lines: Vec<&Feat> = feats.iter().filter(|f| f.centre && f.kind == Kind::Line).collect();
+    let cl_end = |c: Vec2, vertical: bool| -> Option<Vec2> {
+        centre_lines
+            .iter()
+            .filter(|f| {
+                let (a, b) = (f.a, f.b);
+                if vertical {
+                    same(a.x, c.x, ctol) && same(b.x, c.x, ctol) && a.y.min(b.y) <= c.y + ctol && a.y.max(b.y) >= c.y - ctol
+                } else {
+                    same(a.y, c.y, ctol) && same(b.y, c.y, ctol) && a.x.min(b.x) <= c.x + ctol && a.x.max(b.x) >= c.x - ctol
+                }
+            })
+            .flat_map(|f| [f.a, f.b])
+            .max_by(|p, q| if vertical { p.y.total_cmp(&q.y) } else { p.x.total_cmp(&q.x) })
+    };
+    let hole_pts_x: Vec<Vec2> = holes.iter().flat_map(|h| h.centres.iter().map(|c| cl_end(*c, true).unwrap_or(*c))).collect();
+    let hole_pts_y: Vec<Vec2> = holes.iter().flat_map(|h| h.centres.iter().map(|c| cl_end(*c, false).unwrap_or(*c))).collect();
     let origin_x = |x: f64| -> Vec2 {
-        hole_pts
+        hole_pts_x
             .iter()
             .chain(pts.iter())
             .filter(|p| same(p.x, x, ctol))
@@ -507,7 +525,7 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             .unwrap_or(Vec2::new(x, bounds.max.y))
     };
     let origin_y = |y: f64| -> Vec2 {
-        hole_pts
+        hole_pts_y
             .iter()
             .chain(pts.iter())
             .filter(|p| same(p.y, y, ctol))
@@ -529,7 +547,6 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     let gx: Vec<(Vec<f64>, Vec<f64>)> = by_label.values().map(|v| (v.0.clone(), v.1.clone())).collect();
     let gy: Vec<(Vec<f64>, Vec<f64>)> = by_label.values().map(|v| (v.1.clone(), v.0.clone())).collect();
     let crowded = |row: &[f64]| row.windows(2).any(|w| w.get(1).zip(w.first()).is_some_and(|(b, a)| b - a < th * 4.7));
-    let span = |v: &[f64]| (v.iter().copied().fold(f64::INFINITY, f64::min), v.iter().copied().fold(f64::NEG_INFINITY, f64::max));
     let rows = |hole: &[f64], groups: &[(Vec<f64>, Vec<f64>)], edge: &[f64], lo: f64, hi: f64| -> Vec<Vec<f64>> {
         let mut rows: Vec<Vec<f64>> = Vec::new();
         if !hole.is_empty() {
@@ -544,16 +561,10 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             let merged = uniq(rest.iter().flat_map(|g| g.0.iter().copied()).chain([lo, hi]).collect(), ctol);
             // Kinds of hole lying in separate bands across the axis (a row up here, another down
             // there) are dimensioned row by row when one chain would crowd.
-            let apart = rest.len() > 1
-                && rest.iter().enumerate().all(|(i, a)| {
-                    let (a0, a1) = span(&a.1);
-                    rest.iter().skip(i + 1).all(|b| {
-                        let (b0, b1) = span(&b.1);
-                        a1 < b0 - ctol || b1 < a0 - ctol
-                    })
-                });
             if !rest.is_empty() {
-                if crowded(&merged) && apart {
+                // One row per kind of hole when a single chain would crowd (as hand-drafted:
+                // the bolt holes in one row, the slots in another).
+                if crowded(&merged) && rest.len() > 1 {
                     for g in &rest {
                         rows.push(uniq(g.0.iter().copied().chain([lo, hi]).collect(), ctol));
                     }
@@ -597,35 +608,15 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     };
     // Each row from the part outwards; a step too short for its text alternates with its
     // neighbour onto a row of its own further out, so numbers don't run into each other.
+    // Each row on one straight line from the part outwards, as drafted by hand: a step too
+    // short for its number keeps its place in the row (the style's fit puts the number
+    // outside the extension lines).
     let place = |rows: &[Vec<f64>]| -> Vec<(usize, f64, f64, String)> {
         let mut out = Vec::new();
-        let mut level = 0usize;
-        for row in rows {
-            let segs = chain(row, o.pitch_min, ctol);
-            let n = segs.len();
-            let mut extra = 0usize;
-            let mut run = 0usize;
-            for (i, (a, b, text)) in segs.into_iter().enumerate() {
-                let shown = if text.is_empty() { fmt_len((b - a).abs()) } else { text.replace("<>", &fmt_len((b - a).abs())) };
-                // Text plus two arrowheads with their gaps.
-                let need = th * (0.8 * shown.chars().count() as f64 + 2.6);
-                let small = (b - a).abs() < need && n > 1;
-                if small && i == 0 {
-                    // First of the row: its text goes out past the row's start.
-                    out.push((level, b, a, text));
-                    run = 0;
-                } else if small && i + 1 < n {
-                    // Inside the row: on rows of their own further out, neighbours alternating.
-                    let up = 1 + run % 2;
-                    run += 1;
-                    extra = extra.max(up);
-                    out.push((level + up, a, b, text));
-                } else {
-                    out.push((level, a, b, text));
-                    run = 0;
-                }
+        for (level, row) in rows.iter().enumerate() {
+            for (a, b, text) in chain(row, o.pitch_min, ctol) {
+                out.push((level, a, b, text));
             }
-            level += 1 + extra;
         }
         out
     };
@@ -817,6 +808,70 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     Ok(p)
 }
 
+/// The filled regions (solids, solid hatches) among `ents`: weld beads on a fabrication drawing.
+fn weld_polygons(ents: &[Entity]) -> Vec<Vec<Vec2>> {
+    let mut out = Vec::new();
+    for e in ents {
+        match &e.kind {
+            EntityKind::Solid(so) => {
+                let mut v: Vec<Vec2> = Vec::new();
+                for c in so.corners.iter().map(|c| c.xy()) {
+                    if !v.iter().any(|q| q.near(c, 1e-9)) {
+                        v.push(c);
+                    }
+                }
+                // SOLID's corner order is 1-2-4-3.
+                if v.len() == 4 {
+                    v.swap(2, 3);
+                }
+                out.push(v);
+            }
+            EntityKind::Hatch(h) if h.solid => {
+                for lp in h.loops.iter().take(64) {
+                    let v: Vec<Vec2> = lp.vertices.iter().take(256).map(|v| v.p).collect();
+                    if v.len() >= 3 {
+                        out.push(v);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Lines and arcs drawn round a weld bead (along its filled region's edges) are the weld's own,
+/// not the part's: they take no dimension.
+fn drop_weld_outlines(feats: &mut Vec<Feat>, welds: &[Vec<Vec2>]) {
+    if welds.is_empty() {
+        return;
+    }
+    let on_boundary = |q: Vec2, w: &[Vec2]| -> bool {
+        let size = Bounds2::from_points(w.iter().copied());
+        let tol = (size.width().max(size.height()) * 0.02).max(1e-6);
+        let n = w.len();
+        (0..n).any(|i| match (w.get(i), w.get((i + 1) % n)) {
+            (Some(a), Some(b)) => seg_dist(q, *a, *b) <= tol,
+            _ => false,
+        })
+    };
+    feats.retain(|f| {
+        let pts = match f.kind {
+            Kind::Line => vec![f.a, f.b, (f.a + f.b) * 0.5],
+            _ => return true,
+        };
+        !welds.iter().any(|w| pts.iter().all(|q| on_boundary(*q, w)))
+    });
+}
+
+/// Distance from `q` to the segment `a`-`b`.
+fn seg_dist(q: Vec2, a: Vec2, b: Vec2) -> f64 {
+    let ab = b - a;
+    let l2 = ab.dot(ab);
+    let t = if l2 > 0.0 { ((q - a).dot(ab) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    q.dist(a + ab * t)
+}
+
 /// A metric thread drawn as its tap drill circle inside its nominal circle: the nominal size
 /// when `inner` is the tap drill (nominal less the coarse pitch) of `outer`.
 fn thread_size(inner: f64, outer: f64) -> Option<f64> {
@@ -858,14 +913,44 @@ pub(super) fn style_height(s: &Session) -> Result<f64> {
     Ok(if th.is_finite() && th > 0.0 { th } else { 2.5 })
 }
 
-fn run_autodim(s: &mut Session, p: &Value) -> Result<Value> {
-    let hs = targets(s, p)?;
-    if hs.is_empty() {
-        return Err(bad("autodim", "select the part to dimension (its outline, holes and slots)"));
+/// `window`: [[x, y], [x, y]], the area of the part to dimension.
+fn window_param(p: &Value) -> Option<Bounds2> {
+    let w = p.get("window")?.as_array()?;
+    let pt = |v: &Value| -> Option<Vec2> {
+        let a = v.as_array()?;
+        let q = Vec2::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?);
+        q.is_finite().then_some(q)
+    };
+    let (a, b) = (pt(w.first()?)?, pt(w.get(1)?)?);
+    Some(Bounds2::new(Vec2::new(a.x.min(b.x), a.y.min(b.y)), Vec2::new(a.x.max(b.x), a.y.max(b.y))))
+}
+
+/// The drawing objects lying wholly inside `w` (a window selection): lines running on past
+/// it (a shaft through the plate, a neighbouring part) are left out. Dimensions, text and
+/// leaders already there are not geometry.
+pub(super) fn in_window(s: &Session, w: &Bounds2, among: Option<&[Handle]>) -> Result<Vec<Handle>> {
+    let d = s.doc()?;
+    let win = w.expand((w.width().max(w.height()) * 1e-9).max(1e-9));
+    let mut out = Vec::new();
+    for e in d.model.iter() {
+        if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Leader(_) | EntityKind::MLeader(_)) {
+            continue;
+        }
+        if among.is_some_and(|a| !a.contains(&e.handle)) {
+            continue;
+        }
+        let b = cadcraft_doc::entity_bounds(d, e, 0);
+        if !b.is_empty() && win.contains_box(&b) {
+            out.push(e.handle);
+        }
     }
-    // The style: the one asked for, else the one the drawing's dimensions mostly use (a sheet
-    // drawn at 1:5 has its style for 1:5), else the current one.
-    let chosen = match str_param(p, "style") {
+    Ok(out)
+}
+
+/// The dimension style AUTODIM uses: the one asked for, else the one the drawing's dimensions
+/// mostly use (a sheet drawn at 1:5 has its style for 1:5), else none (the current one).
+fn choose_style(s: &Session, p: &Value) -> Result<Option<String>> {
+    Ok(match str_param(p, "style") {
         Some(st) => Some(s.doc()?.dim_style(st).map(|d| d.name.clone()).ok_or_else(|| bad("autodim", format!("no dimension style \"{st}\"")))?),
         None => {
             let d = s.doc()?;
@@ -877,22 +962,41 @@ fn run_autodim(s: &mut Session, p: &Value) -> Result<Value> {
             }
             count.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k).filter(|k| d.dim_style(k).is_some())
         }
-    };
-    if let Some(name) = chosen {
-        s.doc_mut()?.header.set_str("DIMSTYLE", &name);
-    }
+    })
+}
+
+/// What AUTODIM would add for objects `hs`, in the current dimension style.
+fn plan_for(s: &Session, hs: &[Handle], p: &Value) -> Result<Plan> {
     let th = style_height(s)?;
     let feats = {
         let d = s.doc()?;
         let ents: Vec<Entity> = hs.iter().filter_map(|h| d.entity(*h)).map(|e| (**e).clone()).collect();
         let mut f = Vec::new();
         collect(d, &ents, &mut f, 0, None);
+        drop_weld_outlines(&mut f, &weld_polygons(&ents));
         f
     };
     let pitch_min = p.get("pitchMin").and_then(Value::as_u64).map_or(4, |v| v.clamp(3, 1000) as usize);
     let thickness = p.get("thickness").and_then(Value::as_f64);
     let o = Opts { pitch_min, callouts: bool_or(p, "callouts", true), thickness, th };
-    let plan = plan(s, &feats, &o)?;
+    plan(s, &feats, &o)
+}
+
+fn run_autodim(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = match window_param(p) {
+        Some(w) => {
+            let given = if p.get("handles").is_some() || p.get("handle").is_some() { Some(targets(s, p)?) } else { None };
+            in_window(s, &w, given.as_deref())?
+        }
+        None => targets(s, p)?,
+    };
+    if hs.is_empty() {
+        return Err(bad("autodim", "select the part to dimension (its outline, holes and slots)"));
+    }
+    if let Some(name) = choose_style(s, p)? {
+        s.doc_mut()?.header.set_str("DIMSTYLE", &name);
+    }
+    let plan = plan_for(s, &hs, p)?;
     let mut out: Vec<String> = Vec::new();
     let ndims = plan.dims.len();
     for k in plan.dims {
@@ -909,6 +1013,7 @@ fn run_autodim(s: &mut Session, p: &Value) -> Result<Value> {
             out.push(h.to_string());
         }
     }
+    let th = style_height(s)?;
     for (at, text) in plan.labels {
         let k = super::draw::make_text_to(s, at, None, &text, th, 0.0, (cadcraft_doc::HAlign::Center, cadcraft_doc::VAlign::Middle));
         out.push(s.add_entity(k)?.hex());
@@ -936,20 +1041,77 @@ fn run_autodim(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ------------------------------------------------------------------ prompts
 
+/// AUTODIM at the command line: a rectangle round the part (only what lies wholly inside it
+/// counts), shown with the dimensions it gives; clicking moves the nearest corner of the
+/// rectangle to adjust it, a number is the plate thickness, Enter places the dimensions.
+/// Objects selected beforehand are used as they are.
 #[derive(Default)]
 struct AutoDimM {
-    sel: SelectPhase,
+    first: Option<Vec2>,
+    win: Option<Bounds2>,
     objs: Vec<Handle>,
-    asking_t: bool,
+    preselected: bool,
+    thickness: Option<f64>,
+    shown: Vec<EntityKind>,
+    /// The drawing's DIMSTYLE before AUTODIM chose one, put back on cancel.
+    old_style: Option<String>,
+}
+
+fn rect_lines(b: &Bounds2) -> Vec<EntityKind> {
+    let c = [b.min, Vec2::new(b.max.x, b.min.y), b.max, Vec2::new(b.min.x, b.max.y)];
+    (0..4)
+        .filter_map(|i| {
+            let (a, z) = (c.get(i)?, c.get((i + 1) % 4)?);
+            Some(EntityKind::Line(cadcraft_doc::Line { a: cadcraft_geom::Vec3::new(a.x, a.y, 0.0), b: cadcraft_geom::Vec3::new(z.x, z.y, 0.0) }))
+        })
+        .collect()
 }
 
 impl AutoDimM {
-    fn finish(&mut self, s: &mut Session, t: Option<f64>) -> Result<Step> {
+    fn params(&self) -> Value {
         let mut p = json!({ "handles": self.objs.iter().map(|h| h.hex()).collect::<Vec<_>>() });
-        if let (Some(t), Some(m)) = (t, p.as_object_mut()) {
+        if let (Some(t), Some(m)) = (self.thickness, p.as_object_mut()) {
             m.insert("thickness".into(), json!(t));
         }
-        run_autodim(s, &p)?;
+        p
+    }
+    /// Recomputes what lies in the rectangle and the dimensions it gives.
+    fn refresh(&mut self, s: &Session) -> Result<()> {
+        if let Some(w) = self.win {
+            self.objs = in_window(s, &w, None)?;
+        }
+        self.shown.clear();
+        if self.objs.is_empty() {
+            return Ok(());
+        }
+        if let Ok(plan) = plan_for(s, &self.objs, &self.params()) {
+            self.shown.extend(plan.dims);
+            for (pts, _) in plan.notes {
+                for w in pts.windows(2) {
+                    if let (Some(a), Some(b)) = (w.first(), w.get(1)) {
+                        self.shown.push(EntityKind::Line(cadcraft_doc::Line {
+                            a: cadcraft_geom::Vec3::new(a.x, a.y, 0.0),
+                            b: cadcraft_geom::Vec3::new(b.x, b.y, 0.0),
+                        }));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    fn set_style(&mut self, s: &mut Session) -> Result<()> {
+        if let Some(name) = choose_style(s, &Value::Null)? {
+            let d = s.doc_mut()?;
+            self.old_style = Some(d.header.str("DIMSTYLE", "Standard"));
+            d.header.set_str("DIMSTYLE", &name);
+        }
+        Ok(())
+    }
+    fn finish(&mut self, s: &mut Session) -> Result<Step> {
+        if self.objs.is_empty() {
+            return Err(crate::EngineError::Other("Nothing lies wholly inside the rectangle; draw it round the part.".into()));
+        }
+        run_autodim(s, &self.params())?;
         Ok(Step::Done)
     }
 }
@@ -959,46 +1121,102 @@ impl Interactive for AutoDimM {
         "AUTODIM"
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        self.sel = SelectPhase::begin(s);
-        if self.sel.done {
-            self.objs = self.sel.picked.clone();
-            self.asking_t = true;
+        self.set_style(s)?;
+        let sel = s.selection();
+        if !sel.is_empty() {
+            self.objs = sel;
+            self.preselected = true;
+            self.refresh(s)?;
         }
         Ok(Step::Continue)
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        if self.asking_t {
-            Prompt::new("Plate thickness t= (Enter for none)", Accept { point: false, number: true, text: true, select: false, enter: true })
+        if self.preselected || self.win.is_some() {
+            let msg = if self.preselected {
+                "Plate thickness t= (Enter to place the dimensions)"
+            } else {
+                "Click to move the nearest corner of the rectangle, t= thickness, or Enter to place"
+            };
+            let accept = Accept { point: !self.preselected, number: true, text: true, select: false, enter: true };
+            let p = Prompt::new(msg, accept);
+            if self.preselected { p } else { p.kw(&["Window"]) }
+        } else if let Some(a) = self.first {
+            Prompt::new("Specify opposite corner", Accept::POINT).base_opt(Some(a))
         } else {
-            self.sel.prompt()
+            Prompt::new("Specify first corner of a rectangle round the part", Accept::POINT)
         }
+    }
+    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+        if let (Some(a), None) = (self.first, self.win) {
+            return rect_lines(&Bounds2::new(Vec2::new(a.x.min(c.x), a.y.min(c.y)), Vec2::new(a.x.max(c.x), a.y.max(c.y))));
+        }
+        let mut v = self.win.map(|w| rect_lines(&w)).unwrap_or_default();
+        v.extend(self.shown.iter().cloned());
+        v
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if matches!(i, Input::Cancel) {
+            if let Some(old) = self.old_style.take() {
+                s.doc_mut()?.header.set_str("DIMSTYLE", &old);
+            }
             return Ok(Step::Done);
         }
-        if self.asking_t {
-            return match i {
-                Input::Enter => self.finish(s, None),
-                Input::Text(t) | Input::Keyword(t) => {
-                    let t = t.trim().trim_start_matches(['t', 'T', '=']).trim();
-                    match t.parse::<f64>() {
-                        Ok(v) if v > 0.0 && v.is_finite() => self.finish(s, Some(v)),
-                        _ if t.is_empty() => self.finish(s, None),
-                        _ => Err(crate::EngineError::Other("Requires a positive number.".into())),
+        if !self.preselected && self.win.is_none() {
+            let Input::Point(q) = i else {
+                return if matches!(i, Input::Enter) { Ok(Step::Done) } else { Err(crate::EngineError::Other("Specify a point.".into())) };
+            };
+            match self.first {
+                None => self.first = Some(q),
+                Some(a) => {
+                    let w = Bounds2::new(Vec2::new(a.x.min(q.x), a.y.min(q.y)), Vec2::new(a.x.max(q.x), a.y.max(q.y)));
+                    if w.width() <= 0.0 || w.height() <= 0.0 {
+                        return Err(crate::EngineError::Other("The rectangle has no area.".into()));
+                    }
+                    self.win = Some(w);
+                    self.refresh(s)?;
+                }
+            }
+            return Ok(Step::Continue);
+        }
+        match i {
+            Input::Enter => self.finish(s),
+            Input::Point(q) if !self.preselected => {
+                // The nearest corner goes to the click; the opposite one stays.
+                if let Some(w) = self.win {
+                    let corners = [w.min, Vec2::new(w.max.x, w.min.y), w.max, Vec2::new(w.min.x, w.max.y)];
+                    let k = (0..4).min_by(|x, y| {
+                        let d = |i: &usize| corners.get(*i).map_or(f64::INFINITY, |c| c.dist(q));
+                        d(x).total_cmp(&d(y))
+                    });
+                    if let Some(opp) = k.and_then(|k| corners.get((k + 2) % 4)) {
+                        let nw = Bounds2::new(Vec2::new(opp.x.min(q.x), opp.y.min(q.y)), Vec2::new(opp.x.max(q.x), opp.y.max(q.y)));
+                        if nw.width() > 0.0 && nw.height() > 0.0 {
+                            self.win = Some(nw);
+                            self.refresh(s)?;
+                        }
                     }
                 }
-                _ => Ok(Step::Continue),
-            };
-        }
-        match self.sel.feed(s, &i)? {
-            SelOutcome::More => Ok(Step::Continue),
-            SelOutcome::Empty => Ok(Step::Done),
-            SelOutcome::Done(hs) => {
-                self.objs = hs;
-                self.asking_t = true;
                 Ok(Step::Continue)
             }
+            Input::Keyword(k) | Input::Text(k) if k.trim().eq_ignore_ascii_case("window") || k.trim().eq_ignore_ascii_case("w") => {
+                self.first = None;
+                self.win = None;
+                self.shown.clear();
+                Ok(Step::Continue)
+            }
+            Input::Text(t) | Input::Keyword(t) => {
+                let t = t.trim().trim_start_matches(['t', 'T', '=']).trim();
+                match t.parse::<f64>() {
+                    Ok(v) if v > 0.0 && v.is_finite() => {
+                        self.thickness = Some(v);
+                        self.refresh(s)?;
+                        if self.preselected { self.finish(s) } else { Ok(Step::Continue) }
+                    }
+                    _ if t.is_empty() => self.finish(s),
+                    _ => Err(crate::EngineError::Other("Requires a positive number.".into())),
+                }
+            }
+            _ => Ok(Step::Continue),
         }
     }
 }

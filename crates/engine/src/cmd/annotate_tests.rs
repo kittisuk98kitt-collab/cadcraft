@@ -573,3 +573,18 @@ fn linetype_rename_updates_references() {
     assert!(s.execute("rename", &json!({ "table": "linetype", "from": "ByLayer", "to": "X" })).is_err());
     assert_eq!(s.doc().unwrap().entity(by_layer).unwrap().common.linetype, "ByLayer");
 }
+
+#[test]
+fn text_movement_override_brings_the_dim_line_to_moved_text() {
+    let mut s = Session::new();
+    let d = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 2] })).unwrap());
+    // Move text, add leader: the text goes off on its own, the dimension line stays.
+    s.execute("dimoverride", &json!({ "handles": [d.hex()], "DIMTMOVE": 1 })).unwrap();
+    s.execute("dimtedit", &json!({ "handles": [d.hex()], "at": [20, 12] })).unwrap();
+    assert!((dim(&s, d).defpt.y - 2.0).abs() < 1e-9);
+    // Keep dim line with text: the dimension line moves to the text.
+    s.execute("dimoverride", &json!({ "handles": [d.hex()], "DIMTMOVE": 0 })).unwrap();
+    let dm = dim(&s, d);
+    assert!(dm.defpt.y > 10.0 && dm.defpt.y <= 12.0 + 1e-9, "{:?}", dm.defpt);
+    assert_eq!(dm.overrides.get("textMove"), Some(&json!(0)));
+}

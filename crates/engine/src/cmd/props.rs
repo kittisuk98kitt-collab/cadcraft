@@ -562,7 +562,9 @@ fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
             st.font = f.to_string();
         }
         if let Some(f) = str_param(p, "bigFont") {
-            st.big_font = f.to_string();
+            // "(none)" from the dialog: no big font.
+            let f = f.trim();
+            st.big_font = if f.eq_ignore_ascii_case("(none)") || f.eq_ignore_ascii_case("none") { String::new() } else { f.to_string() };
         }
         if let Some(h) = num("height").filter(|h| *h >= 0.0) {
             st.height = h;
@@ -879,8 +881,16 @@ pub(super) fn dim_override(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("dimoverride", format!("no valid dimension variables given (ignored: {})", rejected.join(", "))));
     }
     let d = s.doc_mut()?;
+    let dimscale = d.header.f64("DIMSCALE", 1.0);
+    // Text movement set to "keep dim line with text" (DIMTMOVE 0): a dimension whose text was
+    // moved off gets its dimension line moved to the text, as when the text is dragged.
+    let follow = clear || good.contains_key("textMove");
     let mut n = 0;
     for h in &hs {
+        let style = match d.entity(*h).map(|e| &e.kind) {
+            Some(EntityKind::Dimension(dm)) => d.dim_style(&dm.style).cloned().unwrap_or_default(),
+            _ => continue,
+        };
         d.modify_entity(*h, |e| {
             if let EntityKind::Dimension(dm) = &mut e.kind {
                 if clear {
@@ -888,6 +898,9 @@ pub(super) fn dim_override(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 for (k, v) in &good {
                     dm.overrides.insert(k.clone(), v.clone());
+                }
+                if follow {
+                    style.clone().with_overrides(&dm.overrides).follow_text(dm, dimscale);
                 }
                 dm.block = None;
                 n += 1;

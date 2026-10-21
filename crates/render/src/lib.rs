@@ -1328,7 +1328,7 @@ fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {
 /// Shape a TEXT / ATTRIB / ATTDEF with its style's font and generation flags.
 pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (cadcraft_fonts::Shaped, Bounds2) {
     let ts = text_style(d, &t.style);
-    let font = cadcraft_fonts::TextFont::resolve(&ts.font);
+    let font = cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font);
     let (h, v) = align(t.halign, t.valign);
     let p = cadcraft_fonts::TextParams {
         insert: t.insert.xy(),
@@ -1356,7 +1356,7 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
         rotation: t.rotation,
         line_spacing: t.line_spacing,
         line_spacing_exact: t.line_spacing_exact,
-        font: cadcraft_fonts::TextFont::resolve(&ts.font),
+        font: cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font),
         width_factor: ts.width_factor,
         oblique: ts.oblique,
         columns: t.columns.as_ref().map(|c| cadcraft_fonts::MTextColumnSpec {
@@ -1393,7 +1393,12 @@ fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32)
 /// The font settings of a dimension style's text style.
 pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
     let ts = text_style(d, &st.text_style);
-    DimText { font: cadcraft_fonts::TextFont::resolve(&ts.font), fixed_height: ts.height, width_factor: ts.width_factor, oblique: ts.oblique }
+    DimText {
+        font: cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font),
+        fixed_height: ts.height,
+        width_factor: ts.width_factor,
+        oblique: ts.oblique,
+    }
 }
 
 /// Geometry of a dimension in a drawing: its style, overrides and text font.

@@ -315,14 +315,42 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
         no_drawing(ctx, "Text Style", open);
         return None;
     };
+    // Fonts offered: the shape fonts available (the user's .shx files), the built-in font and
+    // the style's own font; big fonts: the shape fonts with two-byte codes.
+    let shx = cadcraft_fonts::shx::available();
+    let big: Vec<String> = shx.iter().filter(|n| cadcraft_fonts::shx::is_big_font(n)).cloned().collect();
+    let fonts_for = |cur: &str| {
+        let mut v: Vec<String> = vec![cadcraft_fonts::BUILTIN_FONT.to_string()];
+        v.extend(shx.iter().filter(|n| !big.contains(n)).cloned());
+        if !cur.is_empty() && !v.iter().any(|x| x.eq_ignore_ascii_case(cur)) {
+            v.push(cur.to_string());
+        }
+        v
+    };
+    let bigs_for = |cur: &str| {
+        let mut v: Vec<String> = vec!["(none)".to_string()];
+        v.extend(big.iter().cloned());
+        if !cur.is_empty() && !v.iter().any(|x| x.eq_ignore_ascii_case(cur)) {
+            v.push(cur.to_string());
+        }
+        v
+    };
     let mut styles: Vec<Style> = d
         .text_styles
         .iter()
         .map(|s| Style {
             name: s.name.clone(),
             fields: vec![
+                Field::Choice("font", "SHX Font", s.font.clone(), fonts_for(&s.font)),
+                Field::Choice(
+                    "bigFont",
+                    "Big Font",
+                    if s.big_font.is_empty() { "(none)".to_string() } else { s.big_font.clone() },
+                    bigs_for(&s.big_font),
+                ),
                 Field::Num("height", "Height (0 = ask)", s.height),
                 Field::Num("widthFactor", "Width factor", s.width_factor),
+                Field::Num("oblique", "Oblique angle", s.oblique.to_degrees()),
                 Field::Bool("backwards", "Backwards", s.backwards),
                 Field::Bool("upsideDown", "Upside down", s.upside_down),
             ],

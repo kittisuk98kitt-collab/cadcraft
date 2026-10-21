@@ -685,7 +685,32 @@ fn dimension_properties(
     });
     menu_row!("Text style", "DIMTXSTY", es.text_style.clone(), d.text_styles.iter().map(|t| t.name.clone()));
     group(ui, "Fit");
+    menu_row!("Dim line forced", "DIMTOFL", on_off(es.force_line_inside), ["On".to_string(), "Off".to_string()]);
+    // DIMSOXD suppresses the arrows outside; "Dim line inside" On keeps them all inside.
+    menu_row!("Dim line inside", "DIMSOXD", on_off(es.suppress_outside_arrows), ["On".to_string(), "Off".to_string()]);
     num_row!("Dim scale overall", "DIMSCALE", es.scale);
+    const FIT: [&str; 4] = ["Both text and arrows", "Arrows first", "Text first", "Best fit"];
+    prop_row(ui, "Fit", |ui| {
+        let cur = FIT.get(usize::from(es.fit)).copied().unwrap_or("Best fit");
+        if let Some(v) = pick_menu(ui, cur, FIT.iter().map(|v| (*v).to_string()))
+            && let Some(k) = FIT.iter().position(|x| *x == v)
+            && v != cur
+        {
+            put("DIMATFIT", json!(k));
+        }
+    });
+    menu_row!("Text inside", "DIMTIX", on_off(es.text_inside), ["On".to_string(), "Off".to_string()]);
+    // DIMTMOVE: what happens when the text is moved off its default place.
+    const MOVE: [&str; 3] = ["Keep dim line with text", "Move text, add leader", "Move text, no leader"];
+    prop_row(ui, "Text movement", |ui| {
+        let cur = MOVE.get(usize::from(es.text_move)).copied().unwrap_or("Keep dim line with text");
+        if let Some(v) = pick_menu(ui, cur, MOVE.iter().map(|v| (*v).to_string()))
+            && let Some(k) = MOVE.iter().position(|x| *x == v)
+            && v != cur
+        {
+            put("DIMTMOVE", json!(k));
+        }
+    });
     group(ui, "Primary Units");
     menu_row!(
         "Decimal separator",

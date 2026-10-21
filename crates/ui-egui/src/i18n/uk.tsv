@@ -1619,3 +1619,18 @@
 	Text Style (command line)	Текстовий стиль (командний рядок)
 	Auto Dimension	Автоматичні розміри
 	Check Dimensions	Перевірити розміри
+	Dim line forced	Примусова розмірна лінія
+	Dim line inside	Розмірна лінія всередині
+	Both text and arrows	Текст і стрілки
+	Arrows first	Спочатку стрілки
+	Text first	Спочатку текст
+	Best fit	Найкраще розміщення
+	Text inside	Текст всередині
+	Text movement	Переміщення тексту
+	Keep dim line with text	Розмірна лінія за текстом
+	Move text, add leader	Перемістити текст, додати виноску
+	Move text, no leader	Перемістити текст без виноски
+	SHX Font	Шрифт SHX
+	Big Font	Великий шрифт
+	Oblique angle	Кут нахилу
+	(none)	(немає)

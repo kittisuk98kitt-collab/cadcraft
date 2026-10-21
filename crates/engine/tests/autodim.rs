@@ -150,3 +150,58 @@ fn hostile_autodim_params_never_panic() {
     let r = s.execute("dimcheck", &json!({ "handles": [] }));
     assert!(!matches!(r, Err(cadcraft_engine::EngineError::Internal(..))));
 }
+
+#[test]
+fn weld_beads_take_no_dimensions() {
+    let mut s = Session::new();
+    // A 100 × 50 plate with a 6 mm fillet weld drawn at its top-left corner: a filled
+    // triangle with outline lines round it.
+    let mut hs = vec![add(&mut s, "rectang", json!({ "p1": [0, 0], "p2": [100, 50] }))];
+    let tri = add(&mut s, "pline", json!({ "vertices": [{"p": [0, 50]}, {"p": [6, 50]}, {"p": [0, 56]}], "closed": true }));
+    hs.push(tri.clone());
+    hs.push(add(&mut s, "hatch", json!({ "handles": [tri], "pattern": "SOLID" })));
+    hs.push(add(&mut s, "line", json!({ "points": [[6, 50], [0, 56]] })));
+    let r = s.execute("autodim", &json!({ "handles": hs, "callouts": false })).unwrap();
+    let d = s.doc().unwrap();
+    let mut spans = Vec::new();
+    for h in r["handles"].as_array().unwrap() {
+        let Some(e) = h.as_str().and_then(cadcraft_engine::doc::Handle::parse_hex).and_then(|h| d.entity(h)) else { continue };
+        if let EntityKind::Dimension(dm) = &e.kind {
+            spans.push((dm.p14.xy() - dm.p13.xy()).len());
+        }
+    }
+    spans.sort_by(f64::total_cmp);
+    // Just the plate: 100 and 50, nothing for the weld's 6.
+    assert_eq!(spans.len(), 2, "{spans:?}");
+    assert!(spans.iter().all(|v| (*v - 6.0).abs() > 1e-6), "{spans:?}");
+}
+
+#[test]
+fn autodim_takes_only_what_lies_inside_the_rectangle() {
+    let mut s = Session::new();
+    let hs = plate(&mut s);
+    // A shaft running through the plate and out past both sides.
+    add(&mut s, "line", json!({ "points": [[-100, 120], [450, 120]] }));
+    let r = s.execute("autodim", &json!({ "window": [[-5, -5], [355, 205]] })).unwrap();
+    assert_eq!(r["check"]["issues"].as_array().unwrap().len(), 0, "{}", r["check"]);
+    let d = s.doc().unwrap();
+    for h in r["handles"].as_array().unwrap() {
+        let Some(e) = h.as_str().and_then(cadcraft_engine::doc::Handle::parse_hex).and_then(|h| d.entity(h)) else { continue };
+        if let EntityKind::Dimension(dm) = &e.kind {
+            // Nothing measured to the shaft's ends.
+            assert!(dm.p13.x > -1.0 && dm.p14.x < 351.0, "{:?} {:?}", dm.p13, dm.p14);
+        }
+    }
+    let _ = hs;
+    // At the command line: two corners, then a click moving the nearest corner, then Enter.
+    let n0 = s.doc().unwrap().model.len();
+    s.set_selection(vec![]);
+    s.cmdline("AUTODIM").unwrap();
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(-5.0, -5.0))).unwrap();
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(200.0, 205.0))).unwrap();
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(356.0, 210.0))).unwrap();
+    s.cmdline("12").unwrap();
+    s.input(cadcraft_engine::Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    assert!(s.doc().unwrap().model.len() > n0 + 10);
+}
