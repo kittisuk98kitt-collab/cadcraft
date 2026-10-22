@@ -41,6 +41,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 
 # Rust HID backends: no proprietary SDK or C HID library.
 [target.'cfg(target_os = "windows")'.dependencies]
+# The graphics backend probe at start-up (graphics.rs); already in Cargo.lock through eframe.
+pollster = "1.0"
 hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
 # View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting: Windows' Animation effects
 # setting (system_animations.rs). Already in Cargo.lock through wgpu's DirectX 12 backend.

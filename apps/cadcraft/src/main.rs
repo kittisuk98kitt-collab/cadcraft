@@ -282,7 +282,11 @@ fn main() -> eframe::Result {
     }
     // Before eframe creates the wgpu instance: default Windows to DirectX 12 with FXC (see graphics.rs).
     #[cfg(target_os = "windows")]
-    graphics::configure(&mut options, eframe::wgpu::Backends::from_env(), eframe::wgpu::Dx12Compiler::from_env());
+    {
+        let compiler = eframe::wgpu::Dx12Compiler::from_env().unwrap_or(eframe::wgpu::Dx12Compiler::Fxc);
+        let backend = graphics::pick_backend(eframe::wgpu::Backends::from_env(), compiler.clone());
+        graphics::configure(&mut options, Some(backend), Some(compiler));
+    }
     // Command previews (COPY, MOVE...) of large selections are tessellated by egui, whose index
     // buffer outgrew wgpu's default 256 MiB cap; the validation error is fatal. Ask for what the
     // adapter actually supports.
@@ -304,7 +308,7 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
-    eframe::run_native(
+    let result = eframe::run_native(
         "CADCraft",
         options,
         Box::new(move |cc| {
@@ -375,7 +379,22 @@ fn main() -> eframe::Result {
                 native_menu: None,
             }))
         }),
-    )
+    );
+    // A start that fails (no graphics device the program can use…) says so instead of closing
+    // without a word: the program is a windowed one, with no console to print to.
+    #[cfg(target_os = "windows")]
+    if let Err(e) = &result {
+        let log = config_dir().map(|d| d.join(logging::LOG_DIR).join(logging::LOG_FILE).display().to_string()).unwrap_or_default();
+        let _ = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("CADCraft")
+            .set_description(format!(
+                "CADCraft could not start.\n\n{e}\n\nUpdating the graphics driver usually fixes this. \
+                 You can also try another graphics backend: set WGPU_BACKEND=vulkan (or gl) and start CADCraft again.\n\nLog: {log}"
+            ))
+            .show();
+    }
+    result
 }
 
 #[cfg(test)]

@@ -6,6 +6,41 @@ use eframe::{
     wgpu::{Backends, Dx12Compiler},
 };
 
+/// The graphics backend for this machine: DirectX 12 when a graphics card supports it, else
+/// Vulkan, else OpenGL as the last resort (older cards and drivers on Windows 10 have no DX12
+/// device, and the window then never opened). `WGPU_BACKEND` decides when set. The probe makes a
+/// window-less instance per backend and asks it for its adapters before eframe starts: the
+/// window system can be started only once, so a failed start cannot be retried.
+#[cfg(target_os = "windows")]
+pub fn pick_backend(backend_override: Option<Backends>, compiler: Dx12Compiler) -> Backends {
+    if let Some(b) = backend_override {
+        return b;
+    }
+    let available = eframe::wgpu::Instance::enabled_backend_features();
+    for b in [Backends::DX12, Backends::VULKAN] {
+        if !available.contains(b) {
+            continue;
+        }
+        let mut desc = eframe::wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = b;
+        desc.backend_options.dx12.shader_compiler = compiler.clone();
+        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let instance = eframe::wgpu::Instance::new(desc);
+            pollster::block_on(instance.enumerate_adapters(b)).into_iter().map(|a| a.get_info().name).collect::<Vec<_>>()
+        }));
+        match found {
+            Ok(names) if !names.is_empty() => {
+                log::info!("Windows graphics: {b:?} adapters {names:?}");
+                return b;
+            }
+            Ok(_) => log::warn!("Windows graphics: no {b:?} adapter"),
+            Err(_) => log::warn!("Windows graphics: the {b:?} probe failed"),
+        }
+    }
+    log::warn!("Windows graphics: falling back to OpenGL");
+    Backends::GL
+}
+
 /// Default to DirectX 12 with FXC before creating the wgpu instance. Explicit
 /// `WGPU_BACKEND` and `WGPU_DX12_COMPILER` choices, read by the caller, take precedence.
 pub fn configure(options: &mut NativeOptions, backend_override: Option<Backends>, compiler_override: Option<Dx12Compiler>) {
