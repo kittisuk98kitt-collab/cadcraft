@@ -1,0 +1,202 @@
+//! AUTODIM on machine parts as a shop drawing dimensions them: turned parts take diameters,
+//! slots their ends, sprockets no tooth-by-tooth dimensions, bent plates a row on each side.
+
+use cadcraft_engine::Session;
+use cadcraft_engine::doc::{DimKind, EntityKind, Handle};
+use serde_json::{Value, json};
+
+fn add(s: &mut Session, id: &str, p: Value) -> String {
+    let r = s.execute(id, &p).unwrap();
+    r.get("handle")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| r.get("handles").and_then(|h| h.get(0)).and_then(Value::as_str).map(str::to_string))
+        .unwrap()
+}
+
+fn centre_layer(s: &mut Session) {
+    s.execute("linetype", &json!({ "load": "CENTER" })).unwrap();
+    s.execute("layer.new", &json!({ "name": "CL", "linetype": "CENTER" })).unwrap();
+}
+
+fn centre_line(s: &mut Session, a: [f64; 2], b: [f64; 2]) -> String {
+    let h = add(s, "line", json!({ "points": [a, b] }));
+    s.execute("chprop", &json!({ "handles": [h], "layer": "CL" })).unwrap();
+    h
+}
+
+/// (kind, measured length between the definition points, text, dimension line point).
+struct D {
+    kind: DimKind,
+    span: f64,
+    text: String,
+    at: cadcraft_engine::geom::Vec2,
+    p13: cadcraft_engine::geom::Vec2,
+    p14: cadcraft_engine::geom::Vec2,
+}
+
+fn dims(s: &Session, r: &Value) -> Vec<D> {
+    let d = s.doc().unwrap();
+    let mut out = Vec::new();
+    for h in r["handles"].as_array().unwrap() {
+        let Some(e) = h.as_str().and_then(Handle::parse_hex).and_then(|h| d.entity(h)) else { continue };
+        if let EntityKind::Dimension(dm) = &e.kind {
+            let span = match dm.kind {
+                DimKind::Linear { rotation } => {
+                    let v = dm.p14.xy() - dm.p13.xy();
+                    (v.x * rotation.cos() + v.y * rotation.sin()).abs()
+                }
+                _ => (dm.p15.xy() - dm.defpt.xy()).len(),
+            };
+            out.push(D { kind: dm.kind, span, text: dm.text.clone(), at: dm.defpt.xy(), p13: dm.p13.xy(), p14: dm.p14.xy() });
+        }
+    }
+    out
+}
+
+fn has_span(ds: &[D], v: f64) -> bool {
+    ds.iter().any(|d| matches!(d.kind, DimKind::Linear { .. }) && (d.span - v).abs() < 1e-6)
+}
+
+#[test]
+fn a_slot_is_positioned_by_its_ends() {
+    let mut s = Session::new();
+    let mut hs = vec![add(&mut s, "rectang", json!({ "p1": [0, 0], "p2": [300, 100] }))];
+    // A 20 wide slot from x 90 to 190 (end centres 100 and 180).
+    hs.push(add(
+        &mut s,
+        "pline",
+        json!({ "vertices": [
+            {"p": [100, 40]}, {"p": [180, 40], "bulge": 1.0}, {"p": [180, 60]}, {"p": [100, 60], "bulge": 1.0}
+        ], "closed": true }),
+    ));
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    let ds = dims(&s, &r);
+    assert!(has_span(&ds, 90.0) && has_span(&ds, 100.0) && has_span(&ds, 110.0), "ends 90 / 100 / 110");
+    assert!(!has_span(&ds, 80.0), "not the end centres");
+}
+
+#[test]
+fn a_turned_shaft_takes_diameters_across_its_axis() {
+    let mut s = Session::new();
+    centre_layer(&mut s);
+    // Ø140 × 580 with 3 mm chamfers at both ends (cone edges drawn at x 3 and 577).
+    let mut hs = vec![add(
+        &mut s,
+        "pline",
+        json!({ "vertices": [
+            {"p": [3, 70]}, {"p": [577, 70]}, {"p": [580, 67]}, {"p": [580, -67]},
+            {"p": [577, -70]}, {"p": [3, -70]}, {"p": [0, -67]}, {"p": [0, 67]}
+        ], "closed": true }),
+    )];
+    hs.push(add(&mut s, "line", json!({ "points": [[3, 70], [3, -70]] })));
+    hs.push(add(&mut s, "line", json!({ "points": [[577, 70], [577, -70]] })));
+    hs.push(centre_line(&mut s, [-15.0, 0.0], [595.0, 0.0]));
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    let ds = dims(&s, &r);
+    assert!(ds.iter().any(|d| d.text.contains("%%c") && (d.span - 140.0).abs() < 1e-6), "Ø140 across the axis");
+    assert!(has_span(&ds, 580.0));
+    // No half chains 70/70 from the axis, no chamfer steps 3/574/3.
+    assert!(!has_span(&ds, 70.0), "half diameters");
+    assert!(!has_span(&ds, 3.0) && !has_span(&ds, 574.0), "chamfer steps");
+}
+
+#[test]
+fn a_lone_end_view_circle_takes_only_its_diameter() {
+    let mut s = Session::new();
+    centre_layer(&mut s);
+    let hs = vec![
+        add(&mut s, "circle", json!({ "center": [0, 0], "radius": 70 })),
+        add(&mut s, "circle", json!({ "center": [0, 0], "radius": 67 })),
+        centre_line(&mut s, [-85.0, 0.0], [85.0, 0.0]),
+        centre_line(&mut s, [0.0, -85.0], [0.0, 85.0]),
+    ];
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    let ds = dims(&s, &r);
+    assert_eq!(ds.len(), 1, "one diameter");
+    assert!(matches!(ds.first().map(|d| d.kind), Some(DimKind::Diameter)));
+}
+
+#[test]
+fn a_sprocket_takes_its_tip_diameter_bore_and_key_not_its_teeth() {
+    let mut s = Session::new();
+    let mut hs = Vec::new();
+    let n = 16;
+    let (pr, rs) = (195.0_f64, 24.0_f64);
+    let tip = 214.0_f64;
+    let pt = |r: f64, a: f64| [r * a.cos(), r * a.sin()];
+    for i in 0..n {
+        let g = std::f64::consts::TAU * i as f64 / n as f64;
+        let c = pt(pr, g);
+        let inward = g + std::f64::consts::PI;
+        let (a0, a1) = (inward - 75f64.to_radians(), inward + 75f64.to_radians());
+        hs.push(add(&mut s, "arc", json!({ "center": c, "radius": rs, "start": a0.to_degrees(), "end": a1.to_degrees() })));
+        let e = [c[0] + rs * a1.cos(), c[1] + rs * a1.sin()];
+        let t = g + std::f64::consts::PI / n as f64;
+        let (t1, t2) = (pt(tip, t - 0.035), pt(tip, t + 0.035));
+        let g2 = std::f64::consts::TAU * (i + 1) as f64 / n as f64;
+        let c2 = pt(pr, g2);
+        let b0 = g2 + std::f64::consts::PI - 75f64.to_radians();
+        let next = [c2[0] + rs * b0.cos(), c2[1] + rs * b0.sin()];
+        hs.push(add(&mut s, "line", json!({ "points": [e, t1] })));
+        hs.push(add(&mut s, "line", json!({ "points": [t1, t2] })));
+        hs.push(add(&mut s, "line", json!({ "points": [t2, next] })));
+    }
+    hs.push(add(&mut s, "circle", json!({ "center": [0, 0], "radius": 150 })));
+    // Bore Ø165 with a 40 wide keyway on the left, 174.2 from the far side of the bore.
+    let (r, kw) = (82.5_f64, 40.0_f64);
+    let ex = (r * r - (kw / 2.0) * (kw / 2.0)).sqrt();
+    let kx = -(174.2 - r);
+    hs.push(add(&mut s, "line", json!({ "points": [[-ex, 20], [kx, 20]] })));
+    hs.push(add(&mut s, "line", json!({ "points": [[kx, 20], [kx, -20]] })));
+    hs.push(add(&mut s, "line", json!({ "points": [[kx, -20], [-ex, -20]] })));
+    let a = (20.0 / r).asin().to_degrees();
+    hs.push(add(&mut s, "arc", json!({ "center": [0, 0], "radius": r, "start": 180.0 + a, "end": 180.0 - a })));
+    let res = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    let ds = dims(&s, &res);
+    assert!(ds.len() <= 8, "{} dimensions", ds.len());
+    let diam: Vec<f64> = ds.iter().filter(|d| matches!(d.kind, DimKind::Diameter)).map(|d| d.span).collect();
+    assert!(diam.iter().any(|v| (v - 165.0).abs() < 1e-6), "bore {diam:?}");
+    assert!(diam.iter().any(|v| (v - 300.0).abs() < 1e-6), "hub {diam:?}");
+    assert!(diam.iter().any(|v| *v > 420.0), "tip {diam:?}");
+    assert!(has_span(&ds, 40.0) && has_span(&ds, 174.2), "keyway");
+}
+
+#[test]
+fn a_bent_plate_takes_its_lower_edge_from_below() {
+    let mut s = Session::new();
+    let hs = vec![add(
+        &mut s,
+        "pline",
+        json!({ "vertices": [
+            {"p": [0, 456]}, {"p": [190, 456]}, {"p": [395, 192]}, {"p": [613, 192]}, {"p": [843, 75]}, {"p": [990, 75]},
+            {"p": [990, 0]}, {"p": [825, 0]}, {"p": [595, 117]}, {"p": [358.3, 117]}, {"p": [153.3, 381]}, {"p": [0, 381]}
+        ], "closed": true }),
+    )];
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    let ds = dims(&s, &r);
+    let horiz = |d: &&D| matches!(d.kind, DimKind::Linear { rotation } if rotation.abs() < 1e-9);
+    // Above: the upper edge's corners 190 / 205 / 218 / 230 / 147.
+    let above: Vec<&D> = ds.iter().filter(horiz).filter(|d| d.at.y > 456.0).collect();
+    for v in [190.0, 205.0, 218.0, 230.0, 147.0] {
+        assert!(above.iter().any(|d| (d.span - v).abs() < 1e-6), "above: {v}");
+    }
+    assert!(!above.iter().any(|d| (d.span - 153.3).abs() < 1e-6), "the lower edge's corner is not above");
+    // Below: the lower edge's corners, measured from the lower edge.
+    let below: Vec<&D> = ds.iter().filter(horiz).filter(|d| d.at.y < 0.0).collect();
+    assert!(below.iter().any(|d| (d.span - 153.3).abs() < 1e-6), "below: 153.3");
+    assert!(below.iter().all(|d| d.p13.y <= 381.0 + 1e-6 && d.p14.y <= 381.0 + 1e-6));
+}
+
+#[test]
+fn holes_of_two_sizes_in_one_row_take_one_chain() {
+    let mut s = Session::new();
+    let mut hs = vec![add(&mut s, "rectang", json!({ "p1": [0, 0], "p2": [990, 150] }))];
+    hs.push(add(&mut s, "circle", json!({ "center": [65, 75], "radius": 25 })));
+    hs.push(add(&mut s, "circle", json!({ "center": [495, 75], "radius": 30 })));
+    hs.push(add(&mut s, "circle", json!({ "center": [925, 75], "radius": 25 })));
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    let ds = dims(&s, &r);
+    assert!(has_span(&ds, 430.0), "65 / 430 / 430 / 65");
+    assert!(!has_span(&ds, 860.0) && !has_span(&ds, 495.0), "not one row per size");
+}

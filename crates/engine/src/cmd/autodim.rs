@@ -261,13 +261,21 @@ pub(super) fn fmt_len(v: f64) -> String {
 /// A hole (circles sharing a centre) or a slot.
 #[derive(Clone, Debug)]
 struct Hole {
-    /// Points whose positions are dimensioned (the centre; a slot's two end centres).
-    centres: Vec<Vec2>,
+    /// The points whose X (`px`) and Y (`py`) positions are dimensioned: a hole's centre; a
+    /// slot's two ends along its length (as hand-drafted: 9/57/203/57/9) and its centre across.
+    px: Vec<Vec2>,
+    py: Vec<Vec2>,
     /// The circle the callout's leader points at.
     tip_c: Vec2,
     tip_r: f64,
     /// Callout without the count: "12DRILL", "M10 THRU", "12x36 SLOT".
     label: String,
+}
+
+impl Hole {
+    fn round(c: Vec2, r: f64, label: String) -> Hole {
+        Hole { px: vec![c], py: vec![c], tip_c: c, tip_r: r, label }
+    }
 }
 
 /// What AUTODIM adds, before it is added.
@@ -337,6 +345,9 @@ pub(super) struct Opts {
 
 /// The dimensions and notes for a part made of `feats` (outline curves, holes, slots).
 pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
+    // A gear or sprocket: its teeth are given by the tooth form, not dimensioned one by one.
+    let reduced = without_teeth(feats);
+    let feats: &[Feat] = reduced.as_deref().unwrap_or(feats);
     let outline: Vec<&Feat> = feats.iter().filter(|f| !f.hidden).collect();
     let mut bounds = Bounds2::EMPTY;
     for f in &outline {
@@ -358,6 +369,8 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     let near = |a: Vec2, b: Vec2| a.dist(b) <= size * 1e-4;
     let mut holes: Vec<Hole> = Vec::new();
     let mut disc: Option<(Vec2, f64)> = None;
+    // A disc's concentric circles given as diameters.
+    let mut rings: Vec<f64> = Vec::new();
     let mut used_arcs = vec![false; arcs.len()];
     let mut used_lines = vec![false; lines.len()];
     let mut done = vec![false; circles.len()];
@@ -373,8 +386,10 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
         }
         let rmin = group.iter().filter_map(|j| circles.get(*j)).map(|f| f.r).fold(f64::INFINITY, f64::min);
         let rmax = group.iter().filter_map(|j| circles.get(*j)).map(|f| f.r).fold(0.0_f64, f64::max);
-        // The part is a disc when its largest circle holds everything.
-        if 2.0 * rmax >= 0.98 * size && lines.is_empty() {
+        // The part is a disc when its largest circle holds everything (lines only inside it:
+        // a keyway).
+        let inside = |q: Vec2| q.dist(c.c) < 0.9 * rmax;
+        if 2.0 * rmax >= 0.98 * size && lines.iter().all(|l| inside(l.a) && inside(l.b)) && arcs.iter().all(|a| inside(a.a) && inside(a.b)) {
             disc = Some((c.c, rmax));
             if group.len() == 1 {
                 continue;
@@ -395,11 +410,24 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             format!("{}DRILL", fmt_len(2.0 * rmin))
         };
         if disc.is_some_and(|(dc, _)| near(dc, c.c)) && group.len() >= 2 {
-            // A disc with a centre bore: the bore is the hole.
-            holes.push(Hole { centres: vec![c.c], tip_c: c.c, tip_r: rmin, label: format!("{}DRILL", fmt_len(2.0 * rmin)) });
+            // A disc with a centre bore: the bore is the hole. A ring just inside the rim is
+            // its chamfer, not a bore.
+            if rmin >= 0.85 * rmax && group.len() == 2 {
+                continue;
+            }
+            // A turned disc (a hub, steps, a keyed bore): its circles are diameters.
+            let keyed = arcs.iter().any(|a| near(a.c, c.c) && a.sweep > std::f64::consts::PI && a.r < rmax);
+            if group.len() > 2 || keyed {
+                let mut rs: Vec<f64> = group.iter().filter_map(|j| circles.get(*j)).map(|f| f.r).filter(|r| *r < 0.97 * rmax).collect();
+                rs.sort_by(f64::total_cmp);
+                rs.dedup_by(|a, b| same(*a, *b, tol.max(*a * 1e-4)));
+                rings.extend(rs);
+                continue;
+            }
+            holes.push(Hole::round(c.c, rmin, format!("{}DRILL", fmt_len(2.0 * rmin))));
             continue;
         }
-        holes.push(Hole { centres: vec![c.c], tip_c: c.c, tip_r: rmin, label });
+        holes.push(Hole::round(c.c, rmin, label));
     }
     // --- slots: two half circles of one radius facing apart, joined by two lines
     for i in 0..arcs.len() {
@@ -437,7 +465,17 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
                 }
             }
             let len = a.c.dist(b.c) + 2.0 * a.r;
-            holes.push(Hole { centres: vec![a.c, b.c], tip_c: a.c, tip_r: a.r, label: format!("{}x{} SLOT", fmt_len(2.0 * a.r), fmt_len(len)) });
+            let (lo, hi) = if (a.c.x, a.c.y) <= (b.c.x, b.c.y) { (a.c, b.c) } else { (b.c, a.c) };
+            let along = (hi - lo).normalized();
+            let (e0, e1, mid) = (lo - along * a.r, hi + along * a.r, (lo + hi) * 0.5);
+            let (px, py) = if along.y.abs() <= 1e-6 {
+                (vec![e0, e1], vec![mid])
+            } else if along.x.abs() <= 1e-6 {
+                (vec![mid], vec![e0, e1])
+            } else {
+                (vec![a.c, b.c], vec![a.c, b.c])
+            };
+            holes.push(Hole { px, py, tip_c: a.c, tip_r: a.r, label: format!("{}x{} SLOT", fmt_len(2.0 * a.r), fmt_len(len)) });
         }
     }
     // Holes are the part's outline when they sit outside every edge of it (a lone circle part).
@@ -448,7 +486,42 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     let mut xs_edge: Vec<f64> = Vec::new();
     let mut ys_edge: Vec<f64> = Vec::new();
     let mut chamfers: Vec<(Vec2, Vec2, f64)> = Vec::new();
-    for l in &edge_lines {
+    // Ends of sloping edges (a tapered tooth, a bevel).
+    let mut diag: Vec<Vec2> = Vec::new();
+    // A small rectangle carrying holes (a mounting pad, a plate welded on) is placed by its
+    // holes; its own edges take no position.
+    // Three or more rectangles of one size with no hole (posts, legs, cut-outs) are placed by
+    // their centres, as a row of holes is: a pitch when evenly spaced.
+    let rects = small_rects(&edge_lines, &bounds, tol, ctol);
+    let mut pad_lines = vec![false; edge_lines.len()];
+    let mut repeats: Vec<Hole> = Vec::new();
+    for (k, (x0, x1, y0, y1, ls)) in rects.iter().enumerate() {
+        let inside = |q: &Vec2| q.x > *x0 && q.x < *x1 && q.y > *y0 && q.y < *y1;
+        let pad = holes.iter().any(|h| h.px.iter().chain(h.py.iter()).any(inside));
+        let (w, h) = (x1 - x0, y1 - y0);
+        let alike: Vec<&(f64, f64, f64, f64, [usize; 4])> = rects.iter().filter(|r| same(r.1 - r.0, w, ctol) && same(r.3 - r.2, h, ctol)).collect();
+        if pad || alike.len() >= 3 {
+            for i in ls {
+                if let Some(o) = pad_lines.get_mut(*i) {
+                    *o = true;
+                }
+            }
+        }
+        if !pad && alike.len() >= 3 && !rects.iter().take(k).any(|r| same(r.0, *x0, ctol) && same(r.2, *y0, ctol)) {
+            let c = Vec2::new((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+            repeats.push(Hole {
+                px: vec![Vec2::new(c.x, *y1)],
+                py: vec![Vec2::new(*x1, c.y)],
+                tip_c: c,
+                tip_r: 0.0,
+                label: format!("[]{}x{}", fmt_len(w), fmt_len(h)),
+            });
+        }
+    }
+    for (k, l) in edge_lines.iter().enumerate() {
+        if pad_lines.get(k).copied().unwrap_or(false) {
+            continue;
+        }
         if l.is_v(tol) {
             xs_edge.push(l.a.x);
         } else if l.is_h(tol) {
@@ -460,6 +533,7 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             } else {
                 xs_edge.extend([l.a.x, l.b.x]);
                 ys_edge.extend([l.a.y, l.b.y]);
+                diag.extend([l.a, l.b]);
             }
         }
     }
@@ -467,6 +541,10 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     let mut fillets: Vec<&Feat> = Vec::new();
     for (k, a) in arcs.iter().enumerate() {
         if used_arcs.get(k).copied().unwrap_or(true) {
+            continue;
+        }
+        // A disc's bore takes a diameter, not a radius.
+        if a.sweep > std::f64::consts::PI && disc.is_some_and(|(dc, _)| near(dc, a.c)) {
             continue;
         }
         if a.sweep <= std::f64::consts::FRAC_PI_2 + 0.05 {
@@ -477,12 +555,66 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             ys_edge.push(a.c.y);
         }
     }
+    // A chamfer given by its note (C3) takes no position: the line where it starts (on a turned
+    // part, the edge of its cone) is not dimensioned.
+    if o.callouts {
+        let mid = bounds.center();
+        for (a, b, _) in &chamfers {
+            let ix = if (a.x - mid.x).abs() < (b.x - mid.x).abs() { a.x } else { b.x };
+            let iy = if (a.y - mid.y).abs() < (b.y - mid.y).abs() { a.y } else { b.y };
+            xs_edge.retain(|x| !same(*x, ix, ctol));
+            ys_edge.retain(|y| !same(*y, iy, ctol));
+        }
+    }
     xs_edge.extend([bounds.min.x, bounds.max.x]);
     ys_edge.extend([bounds.min.y, bounds.max.y]);
     let xs_edge = uniq(xs_edge, ctol);
     let ys_edge = uniq(ys_edge, ctol);
-    let xs_hole = uniq(holes.iter().flat_map(|h| h.centres.iter().map(|c| c.x)).collect(), ctol);
-    let ys_hole = uniq(holes.iter().flat_map(|h| h.centres.iter().map(|c| c.y)).collect(), ctol);
+    // A turned part (drawn along a centre line it is symmetric about) takes diameters across
+    // its axis instead of positions from one side.
+    let centre_lines: Vec<&Feat> = feats.iter().filter(|f| f.centre && f.kind == Kind::Line).collect();
+    let axis = if disc.is_none() { turned_axis(&centre_lines, &edge_lines, &circles, &bounds, tol, ctol) } else { None };
+    let on_axis = |h: &Hole, q: Vec2| match axis {
+        Some((false, y)) => same(q.y, y, ctol) && h.py.len() == 1,
+        Some((true, x)) => same(q.x, x, ctol) && h.px.len() == 1,
+        None => false,
+    };
+    // Holes positioned from the edges: not a disc's centre bore, not a bore on a turned
+    // part's axis (across it).
+    let mut pos_holes: Vec<&Hole> = holes.iter().filter(|h| !(h.px.len() == 1 && disc.is_some_and(|(dc, _)| near(dc, h.tip_c)))).collect();
+    // A centre line drawn across the part where no hole is drawn marks one (a hole seen from
+    // the side): its position is dimensioned like a hole's.
+    let mut marks: Vec<Hole> = Vec::new();
+    if disc.is_none() && axis.is_none() {
+        for f in centre_lines.iter().take(1000) {
+            let (lo, hi) = (f.a.min(f.b), f.a.max(f.b));
+            let across_x = f.is_v(tol)
+                && f.a.x > bounds.min.x + ctol
+                && f.a.x < bounds.max.x - ctol
+                && lo.y <= bounds.min.y + ctol
+                && hi.y >= bounds.max.y - ctol;
+            let across_y = f.is_h(tol)
+                && f.a.y > bounds.min.y + ctol
+                && f.a.y < bounds.max.y - ctol
+                && lo.x <= bounds.min.x + ctol
+                && hi.x >= bounds.max.x - ctol;
+            let taken_x = |x: f64| holes.iter().chain(marks.iter()).any(|h| h.px.iter().any(|q| same(q.x, x, ctol)));
+            let taken_y = |y: f64| holes.iter().chain(marks.iter()).any(|h| h.py.iter().any(|q| same(q.y, y, ctol)));
+            if across_x && !taken_x(f.a.x) {
+                marks.push(Hole { px: vec![hi], py: Vec::new(), tip_c: hi, tip_r: 0.0, label: "|".into() });
+            } else if across_y && !taken_y(f.a.y) {
+                marks.push(Hole { px: Vec::new(), py: vec![hi], tip_c: hi, tip_r: 0.0, label: "-".into() });
+            }
+        }
+    }
+    pos_holes.extend(marks.iter());
+    pos_holes.extend(repeats.iter());
+    let xs_hole =
+        uniq(pos_holes.iter().filter(|h| !(axis.is_some_and(|a| a.0) && on_axis(h, h.tip_c))).flat_map(|h| h.px.iter().map(|c| c.x)).collect(), ctol);
+    let ys_hole = uniq(
+        pos_holes.iter().filter(|h| !(axis.is_some_and(|a| !a.0) && on_axis(h, h.tip_c))).flat_map(|h| h.py.iter().map(|c| c.y)).collect(),
+        ctol,
+    );
 
     // Extension line origins: the outline point at that coordinate nearest the side the
     // dimensions go (top for X, right for Y); hole centres for holes.
@@ -498,7 +630,6 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     }
     // A hole's extension line starts where the draftsman picks it: the end of its centre line
     // (the top end for an X position, the right end for a Y one); the centre when it has none.
-    let centre_lines: Vec<&Feat> = feats.iter().filter(|f| f.centre && f.kind == Kind::Line).collect();
     let cl_end = |c: Vec2, vertical: bool| -> Option<Vec2> {
         centre_lines
             .iter()
@@ -513,8 +644,8 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             .flat_map(|f| [f.a, f.b])
             .max_by(|p, q| if vertical { p.y.total_cmp(&q.y) } else { p.x.total_cmp(&q.x) })
     };
-    let hole_pts_x: Vec<Vec2> = holes.iter().flat_map(|h| h.centres.iter().map(|c| cl_end(*c, true).unwrap_or(*c))).collect();
-    let hole_pts_y: Vec<Vec2> = holes.iter().flat_map(|h| h.centres.iter().map(|c| cl_end(*c, false).unwrap_or(*c))).collect();
+    let hole_pts_x: Vec<Vec2> = pos_holes.iter().flat_map(|h| h.px.iter().map(|c| cl_end(*c, true).unwrap_or(*c))).collect();
+    let hole_pts_y: Vec<Vec2> = pos_holes.iter().flat_map(|h| h.py.iter().map(|c| cl_end(*c, false).unwrap_or(*c))).collect();
     let origin_x = |x: f64| -> Vec2 {
         hole_pts_x
             .iter()
@@ -538,15 +669,23 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     // Hole positions per kind of hole (by callout), for rows of their own when one row for
     // all of them would crowd.
     let mut by_label: BTreeMap<String, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
-    for h in &holes {
+    for h in &pos_holes {
         let e = by_label.entry(h.label.clone()).or_default();
-        e.0.extend(h.centres.iter().map(|c| c.x));
-        e.1.extend(h.centres.iter().map(|c| c.y));
+        // On a turned part's axis a hole has no position across it.
+        if !(axis.is_some_and(|a| a.0) && on_axis(h, h.tip_c)) {
+            e.0.extend(h.px.iter().map(|c| c.x));
+        }
+        if !(axis.is_some_and(|a| !a.0) && on_axis(h, h.tip_c)) {
+            e.1.extend(h.py.iter().map(|c| c.y));
+        }
     }
     // (positions along the axis, positions across it) per kind of hole.
     let gx: Vec<(Vec<f64>, Vec<f64>)> = by_label.values().map(|v| (v.0.clone(), v.1.clone())).collect();
     let gy: Vec<(Vec<f64>, Vec<f64>)> = by_label.values().map(|v| (v.1.clone(), v.0.clone())).collect();
-    let crowded = |row: &[f64]| row.windows(2).any(|w| w.get(1).zip(w.first()).is_some_and(|(b, a)| b - a < th * 4.7));
+    // A step is crowded when its number and arrows don't fit between its extension lines.
+    let crowded = |row: &[f64]| {
+        row.windows(2).any(|w| w.get(1).zip(w.first()).is_some_and(|(b, a)| b - a < th * (0.8 * fmt_len(b - a).chars().count() as f64 + 2.0)))
+    };
     let rows = |hole: &[f64], groups: &[(Vec<f64>, Vec<f64>)], edge: &[f64], lo: f64, hi: f64| -> Vec<Vec<f64>> {
         let mut rows: Vec<Vec<f64>> = Vec::new();
         if !hole.is_empty() {
@@ -595,17 +734,87 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
         // A disc: its diameter, and the hole positions from its centre.
         let at = c + Vec2::from_angle(std::f64::consts::FRAC_PI_4) * r;
         p.dims.push(super::annotate::dim(s, DimKind::Diameter, c * 2.0 - at, Vec2::ZERO, Vec2::ZERO, at, Vec2::ZERO, ""));
+        // The rings inside, each pointed at a different angle so the notes don't collide.
+        for (i, r) in rings.iter().rev().enumerate().take(16) {
+            let ang = std::f64::consts::FRAC_PI_4 + std::f64::consts::FRAC_PI_2 * (1 + i) as f64 + 0.2 * (i / 3) as f64;
+            let at = c + Vec2::from_angle(ang) * *r;
+            p.dims.push(super::annotate::dim(s, DimKind::Diameter, c * 2.0 - at, Vec2::ZERO, Vec2::ZERO, at, Vec2::ZERO, ""));
+        }
     }
-    let x_rows = if disc.is_some() {
+    if let Some((c, _)) = disc {
+        disc_bore_and_key(s, &mut p, c, &arcs, &edge_lines, ctol, gap0);
+    }
+    if let Some((vertical, at)) = axis {
+        axis_diameters(s, &mut p, &edge_lines, vertical, at, ctol, th);
+    }
+    // Steps of the outline that can't be seen from above (hidden under another edge: the lower
+    // edge of a bent plate) are dimensioned from below, in a row of their own under the part;
+    // likewise those hidden from the right go to the left.
+    let mut segs: Vec<(Vec2, Vec2)> = edge_lines.iter().map(|l| (l.a, l.b)).collect();
+    for (k, a) in arcs.iter().enumerate() {
+        if used_arcs.get(k).copied().unwrap_or(false) {
+            continue;
+        }
+        let a0 = a.c.angle_to(a.a);
+        let mut prev = a.a;
+        for j in 1..=16 {
+            let q = a.c + Vec2::from_angle(a0 + a.sweep * j as f64 / 16.0) * a.r;
+            segs.push((prev, q));
+            prev = q;
+        }
+    }
+    let clear = |q: Vec2, d: Vec2| !segs.iter().any(|(a, b)| ray_hits(q + d * (ctol * 2.0), d, *a, *b));
+    let extreme = |x: f64, vertical: bool, most: bool| -> Option<Vec2> {
+        let on = pts.iter().filter(|q| same(if vertical { q.x } else { q.y }, x, ctol)).copied();
+        let key = |q: &Vec2| if vertical { q.y } else { q.x };
+        if most { on.max_by(|a, b| key(a).total_cmp(&key(b))) } else { on.min_by(|a, b| key(a).total_cmp(&key(b))) }
+    };
+    let hidden_side = |vals: &[f64], vertical: bool, lo: f64, hi: f64| -> Vec<f64> {
+        let (out, back) = if vertical { (Vec2::new(0.0, 1.0), Vec2::new(0.0, -1.0)) } else { (Vec2::new(1.0, 0.0), Vec2::new(-1.0, 0.0)) };
+        vals.iter()
+            .copied()
+            .filter(|v| !same(*v, lo, ctol) && !same(*v, hi, ctol))
+            .filter(|v| extreme(*v, vertical, true).is_some_and(|t| !clear(t, out)) && extreme(*v, vertical, false).is_some_and(|b| clear(b, back)))
+            .collect()
+    };
+    // Along a turned part's axis only its faces are dimensioned, not where a taper turns
+    // (a sprocket's tooth flanks).
+    let face_only = |vals: Vec<f64>, vertical: bool| -> Vec<f64> {
+        let ls: Vec<f64> =
+            edge_lines.iter().filter(|l| if vertical { l.is_v(tol) } else { l.is_h(tol) }).map(|l| if vertical { l.a.x } else { l.a.y }).collect();
+        let lim = if vertical { (bounds.min.x, bounds.max.x) } else { (bounds.min.y, bounds.max.y) };
+        vals.into_iter()
+            .filter(|v| {
+                let sloping = diag.iter().any(|q| same(if vertical { q.x } else { q.y }, *v, ctol));
+                !sloping || ls.iter().any(|f| same(*f, *v, ctol)) || same(*v, lim.0, ctol) || same(*v, lim.1, ctol)
+            })
+            .collect()
+    };
+    let (xs_edge, ys_edge) = match axis {
+        Some((false, _)) => (face_only(xs_edge, true), ys_edge),
+        Some((true, _)) => (xs_edge, face_only(ys_edge, false)),
+        None => (xs_edge, ys_edge),
+    };
+    let x_edge_rows = disc.is_none() && !axis.is_some_and(|a| a.0);
+    let y_edge_rows = disc.is_none() && !axis.is_some_and(|a| !a.0);
+    let xs_low = if x_edge_rows { hidden_side(&xs_edge, true, bounds.min.x, bounds.max.x) } else { Vec::new() };
+    let ys_left = if y_edge_rows { hidden_side(&ys_edge, false, bounds.min.y, bounds.max.y) } else { Vec::new() };
+    let xs_top: Vec<f64> = xs_edge.iter().copied().filter(|x| !xs_low.iter().any(|l| same(*l, *x, ctol))).collect();
+    let ys_right: Vec<f64> = ys_edge.iter().copied().filter(|y| !ys_left.iter().any(|l| same(*l, *y, ctol))).collect();
+    let x_rows = if !x_edge_rows {
         rows(&xs_hole, &gx, &[], bounds.min.x, bounds.max.x).into_iter().filter(|r| r.len() > 2).collect()
     } else {
-        rows(&xs_hole, &gx, &xs_edge, bounds.min.x, bounds.max.x)
+        rows(&xs_hole, &gx, &xs_top, bounds.min.x, bounds.max.x)
     };
-    let y_rows = if disc.is_some() {
+    let y_rows = if !y_edge_rows {
         rows(&ys_hole, &gy, &[], bounds.min.y, bounds.max.y).into_iter().filter(|r| r.len() > 2).collect()
     } else {
-        rows(&ys_hole, &gy, &ys_edge, bounds.min.y, bounds.max.y)
+        rows(&ys_hole, &gy, &ys_right, bounds.min.y, bounds.max.y)
     };
+    let low_rows: Vec<Vec<f64>> =
+        if xs_low.is_empty() { Vec::new() } else { vec![uniq(xs_low.iter().copied().chain([bounds.min.x, bounds.max.x]).collect(), ctol)] };
+    let left_rows: Vec<Vec<f64>> =
+        if ys_left.is_empty() { Vec::new() } else { vec![uniq(ys_left.iter().copied().chain([bounds.min.y, bounds.max.y]).collect(), ctol)] };
     // Each row from the part outwards; a step too short for its text alternates with its
     // neighbour onto a row of its own further out, so numbers don't run into each other.
     // Each row on one straight line from the part outwards, as drafted by hand: a step too
@@ -626,6 +835,29 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     // How far out the dimension rows reach above and to the right of the part.
     let top_reach = if x_place.is_empty() { 0.0 } else { gap0 + step * levels(&x_place) as f64 };
     let right_reach = if y_place.is_empty() { 0.0 } else { gap0 + step * levels(&y_place) as f64 };
+    let low_place = place(&low_rows);
+    let left_place = place(&left_rows);
+    let bottom_reach = if low_place.is_empty() { 0.0 } else { gap0 + step * levels(&low_place) as f64 };
+    let left_reach = if left_place.is_empty() { 0.0 } else { gap0 + step * levels(&left_place) as f64 };
+    for (k, a, b, text) in low_place {
+        let y = bounds.min.y - gap0 - step * k as f64;
+        let o_low = |x: f64| extreme(x, true, false).unwrap_or(Vec2::new(x, bounds.min.y));
+        p.dims.push(super::annotate::dim(s, DimKind::Linear { rotation: 0.0 }, Vec2::new(a, y), o_low(a), o_low(b), Vec2::ZERO, Vec2::ZERO, &text));
+    }
+    for (k, a, b, text) in left_place {
+        let x = bounds.min.x - gap0 - step * k as f64;
+        let o_left = |y: f64| extreme(y, false, false).unwrap_or(Vec2::new(bounds.min.x, y));
+        p.dims.push(super::annotate::dim(
+            s,
+            DimKind::Linear { rotation: std::f64::consts::FRAC_PI_2 },
+            Vec2::new(x, a),
+            o_left(a),
+            o_left(b),
+            Vec2::ZERO,
+            Vec2::ZERO,
+            &text,
+        ));
+    }
     for (k, a, b, text) in x_place {
         let y = bounds.max.y + gap0 + step * k as f64;
         p.dims.push(super::annotate::dim(
@@ -668,7 +900,11 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             let ty = if d.y < 0.0 { c.y - bounds.min.y } else { bounds.max.y - c.y };
             tx.min(ty).max(0.0) * std::f64::consts::SQRT_2
         };
-        let over = |d: Vec2| (if d.x > 0.0 { right_reach } else { 0.0 }).max(if d.y > 0.0 { top_reach } else { 0.0 }) * std::f64::consts::SQRT_2;
+        let over = |d: Vec2| {
+            let rx = if d.x > 0.0 { right_reach } else { left_reach };
+            let ry = if d.y > 0.0 { top_reach } else { bottom_reach };
+            rx.max(ry) * std::f64::consts::SQRT_2
+        };
         let penalty = [1.0, 1.15, 3.0, 4.0];
         // (text, candidates: tip, direction index, distance out to the part's edge)
         let mut wanted: Vec<(String, Vec<(Vec2, usize, f64)>)> = Vec::new();
@@ -779,10 +1015,22 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             // Past the dimension rows when it goes their way.
             let k0 = tip + d * reach;
             // Only where the rows are: beside the part for the right ones, above it for the top.
-            let beside = k0.y > bounds.min.y - th && k0.y < bounds.max.y + top_reach;
-            let above = k0.x > bounds.min.x - th && k0.x < bounds.max.x + right_reach;
-            let need_x = if d.x > 0.0 && beside { (bounds.max.x + right_reach + th - k0.x).max(0.0) } else { 0.0 };
-            let need_y = if d.y > 0.0 && above { (bounds.max.y + top_reach + th - k0.y).max(0.0) } else { 0.0 };
+            let beside = k0.y > bounds.min.y - bottom_reach - th && k0.y < bounds.max.y + top_reach;
+            let above = k0.x > bounds.min.x - left_reach - th && k0.x < bounds.max.x + right_reach;
+            let need_x = if d.x > 0.0 && beside {
+                (bounds.max.x + right_reach + th - k0.x).max(0.0)
+            } else if d.x < 0.0 && beside && left_reach > 0.0 {
+                (k0.x - (bounds.min.x - left_reach - th)).max(0.0)
+            } else {
+                0.0
+            };
+            let need_y = if d.y > 0.0 && above {
+                (bounds.max.y + top_reach + th - k0.y).max(0.0)
+            } else if d.y < 0.0 && above && bottom_reach > 0.0 {
+                (k0.y - (bounds.min.y - bottom_reach - th)).max(0.0)
+            } else {
+                0.0
+            };
             reach += need_x.max(need_y) * std::f64::consts::SQRT_2;
             let w = th * (0.8 * text.chars().count() as f64 + 1.0);
             // The text sits on the leader's landing, which runs on under it.
@@ -807,6 +1055,290 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
         p.labels.push((bounds.center(), format!("t={}", fmt_len(t))));
     }
     Ok(p)
+}
+
+/// A gear or sprocket outline without its teeth: when eight or more outline arcs of one radius
+/// sit evenly round one centre (the tooth roots), the curves out beyond the roots are replaced
+/// by the tip circle. None when the outline has no teeth.
+fn without_teeth(feats: &[Feat]) -> Option<Vec<Feat>> {
+    let arcs: Vec<&Feat> = feats.iter().filter(|f| !f.hidden && f.kind == Kind::Arc).collect();
+    let mut tried: Vec<f64> = Vec::new();
+    for a in arcs.iter().take(2000) {
+        if tried.iter().any(|r| same(*r, a.r, a.r * 1e-3)) {
+            continue;
+        }
+        tried.push(a.r);
+        let ring: Vec<&&Feat> = arcs.iter().filter(|b| same(b.r, a.r, a.r * 1e-3)).collect();
+        if ring.len() < 8 {
+            continue;
+        }
+        let n = ring.len() as f64;
+        let o = ring.iter().fold(Vec2::ZERO, |acc, b| acc + b.c) * (1.0 / n);
+        let d: Vec<f64> = ring.iter().map(|b| b.c.dist(o)).collect();
+        let mean = d.iter().sum::<f64>() / n;
+        if mean <= 2.0 * a.r || d.iter().any(|x| !same(*x, mean, mean * 0.01)) {
+            continue;
+        }
+        let root = mean - a.r;
+        let beyond = |q: Vec2| q.dist(o) >= root * 0.97;
+        let tooth = |f: &Feat| -> bool {
+            !f.hidden
+                && match f.kind {
+                    Kind::Line => beyond(f.a) && beyond(f.b),
+                    Kind::Arc => beyond(f.a) && beyond(f.b) && f.c.dist(o) > root * 0.5,
+                    Kind::Circle => false,
+                }
+        };
+        let mut tip = 0.0_f64;
+        for f in feats.iter().filter(|f| tooth(f)) {
+            tip = tip.max(f.a.dist(o)).max(f.b.dist(o));
+            if f.kind == Kind::Arc {
+                let mid = f.c + Vec2::from_angle(f.c.angle_to(f.a) + f.sweep / 2.0) * f.r;
+                tip = tip.max(mid.dist(o));
+            }
+        }
+        if tip <= root {
+            continue;
+        }
+        let mut out: Vec<Feat> = feats.iter().filter(|f| !tooth(f)).copied().collect();
+        out.push(Feat {
+            kind: Kind::Circle,
+            hidden: false,
+            a: o,
+            b: o,
+            c: o,
+            r: tip,
+            sweep: std::f64::consts::TAU,
+            block_area: None,
+            layer_annot: false,
+            centre: false,
+        });
+        return Some(out);
+    }
+    None
+}
+
+/// Small rectangles (under a twentieth of the part's area) each drawn as four lines of its
+/// own: (x0, x1, y0, y1, the four lines' indices).
+fn small_rects(lines: &[&Feat], b: &Bounds2, tol: f64, ctol: f64) -> Vec<(f64, f64, f64, f64, [usize; 4])> {
+    let mut out = Vec::new();
+    if lines.len() > 4000 {
+        return out;
+    }
+    let area = b.width() * b.height();
+    let span = |l: &Feat, h: bool| if h { (l.a.x.min(l.b.x), l.a.x.max(l.b.x)) } else { (l.a.y.min(l.b.y), l.a.y.max(l.b.y)) };
+    for (i, h1) in lines.iter().enumerate() {
+        if !h1.is_h(tol) {
+            continue;
+        }
+        let (x0, x1) = span(h1, true);
+        for (j, h2) in lines.iter().enumerate() {
+            if j <= i || !h2.is_h(tol) || same(h1.a.y, h2.a.y, ctol) {
+                continue;
+            }
+            let (u0, u1) = span(h2, true);
+            if !same(x0, u0, ctol) || !same(x1, u1, ctol) {
+                continue;
+            }
+            let (y0, y1) = (h1.a.y.min(h2.a.y), h1.a.y.max(h2.a.y));
+            if (x1 - x0) * (y1 - y0) > area * 0.05 {
+                continue;
+            }
+            let side = |x: f64| {
+                lines.iter().position(|v| {
+                    v.is_v(tol) && same(v.a.x, x, ctol) && {
+                        let (a, c) = span(v, false);
+                        same(a, y0, ctol) && same(c, y1, ctol)
+                    }
+                })
+            };
+            if let (Some(l), Some(r)) = (side(x0), side(x1)) {
+                out.push((x0, x1, y0, y1, [i, j, l, r]));
+                if out.len() >= 2000 {
+                    return out;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The axis of a turned part: a centre line running most of the part's length, with the
+/// outline mirrored about it. `(true, x)` for a vertical axis at `x`, `(false, y)` for a
+/// horizontal one.
+fn turned_axis(centre_lines: &[&Feat], edges: &[&Feat], circles: &[&Feat], b: &Bounds2, tol: f64, ctol: f64) -> Option<(bool, f64)> {
+    for vertical in [false, true] {
+        let sw = |v: Vec2| if vertical { Vec2::new(v.y, v.x) } else { v };
+        let (lo, hi) = (sw(b.min), sw(b.max));
+        let (len, across) = (hi.x - lo.x, hi.y - lo.y);
+        if len <= 0.0 || across <= 0.0 {
+            continue;
+        }
+        // Centre lines of this direction across the part: more than one are hole marks, not an axis.
+        let marks: Vec<&&Feat> = centre_lines
+            .iter()
+            .filter(|cl| {
+                let (a, e) = (sw(cl.a), sw(cl.b));
+                same(a.y, e.y, tol) && a.y > lo.y && a.y < hi.y
+            })
+            .collect();
+        if marks.len() != 1 {
+            continue;
+        }
+        for cl in marks {
+            let (a, e) = (sw(cl.a), sw(cl.b));
+            // A hole's centre line runs through its circle.
+            if circles.iter().any(|c| same(sw(c.c).y, a.y, ctol) && sw(c.c).x > lo.x && sw(c.c).x < hi.x) {
+                continue;
+            }
+            if !same(a.y, e.y, tol) || (a.x - e.x).abs() < 0.6 * len || a.y <= lo.y || a.y >= hi.y {
+                continue;
+            }
+            let y = a.y;
+            if !same(hi.y - y, y - lo.y, (across * 0.01).max(ctol)) {
+                continue;
+            }
+            // Lines along the axis (off it) mirrored about it.
+            let along: Vec<(Vec2, Vec2)> = edges
+                .iter()
+                .map(|l| (sw(l.a), sw(l.b)))
+                .filter(|(p, q)| same(p.y, q.y, tol) && (p.x - q.x).abs() > tol && !same(p.y, y, ctol))
+                .collect();
+            if along.len() < 2 {
+                continue;
+            }
+            let mirrored = along
+                .iter()
+                .filter(|(p, q)| {
+                    let (x0, x1) = (p.x.min(q.x), p.x.max(q.x));
+                    along.iter().any(|(r, t)| same(r.y, 2.0 * y - p.y, ctol) && r.x.min(t.x) < x1 - ctol && r.x.max(t.x) > x0 + ctol)
+                })
+                .count();
+            if mirrored * 5 >= along.len() * 4 {
+                return Some((vertical, y));
+            }
+        }
+    }
+    None
+}
+
+/// Diameters of a turned part across its axis: one per diameter, on the longest stretch at that
+/// diameter (dimension lines kept apart along the part).
+fn axis_diameters(s: &Session, p: &mut Plan, edges: &[&Feat], vertical: bool, y: f64, ctol: f64, th: f64) {
+    let sw = |v: Vec2| if vertical { Vec2::new(v.y, v.x) } else { v };
+    // (radius, from x, to x) of each stretch on one side of the axis that has a mirror.
+    let along: Vec<(f64, f64, f64)> = edges
+        .iter()
+        .map(|l| (sw(l.a), sw(l.b)))
+        .filter(|(a, b)| same(a.y, b.y, ctol) && (a.x - b.x).abs() > ctol && a.y > y + ctol)
+        .map(|(a, b)| (a.y - y, a.x.min(b.x), a.x.max(b.x)))
+        .filter(|(r, x0, x1)| {
+            edges.iter().any(|l| {
+                let (c, d) = (sw(l.a), sw(l.b));
+                same(c.y, y - r, ctol) && same(d.y, y - r, ctol) && c.x.min(d.x) < x1 - ctol && c.x.max(d.x) > x0 + ctol
+            })
+        })
+        .collect();
+    let radii = uniq(along.iter().map(|a| a.0).collect(), ctol);
+    let mut placed: Vec<f64> = Vec::new();
+    // Largest first: the outside diameters take the middle of their stretch.
+    for r in radii.iter().rev().take(64) {
+        let Some((_, x0, x1)) = along.iter().filter(|a| same(a.0, *r, ctol)).copied().max_by(|a, b| (a.2 - a.1).total_cmp(&(b.2 - b.1))) else {
+            continue;
+        };
+        let Some(x) = [0.5, 0.3, 0.7, 0.15, 0.85].iter().map(|f| x0 + (x1 - x0) * f).find(|x| {
+            // Clear of the other dimensions, and not across a feature inside (a slot, a bore).
+            !placed.iter().any(|q| (q - x).abs() < th * 2.5)
+                && !edges.iter().any(|l| {
+                    let (c, d) = (sw(l.a), sw(l.b));
+                    same(c.y, d.y, ctol) && (c.y - y).abs() < r - ctol && c.x.min(d.x) - th < *x && c.x.max(d.x) + th > *x
+                })
+        }) else {
+            continue;
+        };
+        placed.push(x);
+        let (top, bot) = (sw(Vec2::new(x, y + r)), sw(Vec2::new(x, y - r)));
+        let rotation = if vertical { 0.0 } else { std::f64::consts::FRAC_PI_2 };
+        p.dims.push(super::annotate::dim(s, DimKind::Linear { rotation }, top, top, bot, Vec2::ZERO, Vec2::ZERO, "%%c<>"));
+    }
+}
+
+/// A disc's bore (an arc round its centre broken by a keyway) as a diameter, and the keyway's
+/// width and depth.
+fn disc_bore_and_key(s: &Session, p: &mut Plan, c: Vec2, arcs: &[&Feat], edges: &[&Feat], ctol: f64, gap: f64) {
+    let Some(bore) = arcs.iter().filter(|a| a.c.dist(c) <= ctol && a.sweep > std::f64::consts::PI).max_by(|a, b| a.sweep.total_cmp(&b.sweep)) else {
+        return;
+    };
+    // The bore's diameter, pointed at the middle of its arc (away from the keyway).
+    let at = c + Vec2::from_angle(bore.c.angle_to(bore.a) + bore.sweep / 2.0) * bore.r;
+    p.dims.push(super::annotate::dim(s, DimKind::Diameter, c * 2.0 - at, Vec2::ZERO, Vec2::ZERO, at, Vec2::ZERO, ""));
+    // The keyway: lines next to the bore's gap.
+    let reach = bore.r * 1.8;
+    let key: Vec<&&Feat> = edges.iter().filter(|l| l.a.dist(c) < reach && l.b.dist(c) < reach).collect();
+    let gap_dir = -(at - c).normalized();
+    if gap_dir.y.abs() >= gap_dir.x.abs() {
+        let xs = uniq(key.iter().filter(|l| same(l.a.x, l.b.x, ctol)).map(|l| l.a.x).collect(), ctol);
+        let floor =
+            key.iter().filter(|l| same(l.a.y, l.b.y, ctol)).map(|l| l.a.y).max_by(|a, b| ((a - c.y) * gap_dir.y).total_cmp(&((b - c.y) * gap_dir.y)));
+        if let (Some(x0), Some(x1), Some(fy)) = (xs.first().copied(), xs.last().copied(), floor) {
+            if x1 - x0 > ctol {
+                let y = fy + gap_dir.y.signum() * gap;
+                p.dims.push(super::annotate::dim(
+                    s,
+                    DimKind::Linear { rotation: 0.0 },
+                    Vec2::new(x0, y),
+                    Vec2::new(x0, fy),
+                    Vec2::new(x1, fy),
+                    Vec2::ZERO,
+                    Vec2::ZERO,
+                    "",
+                ));
+            }
+            let far = Vec2::new(c.x, c.y - gap_dir.y.signum() * bore.r);
+            let x = x1.max(c.x + bore.r) + gap;
+            p.dims.push(super::annotate::dim(
+                s,
+                DimKind::Linear { rotation: std::f64::consts::FRAC_PI_2 },
+                Vec2::new(x, fy),
+                Vec2::new(x1, fy),
+                far,
+                Vec2::ZERO,
+                Vec2::ZERO,
+                "",
+            ));
+        }
+    } else {
+        let ys = uniq(key.iter().filter(|l| same(l.a.y, l.b.y, ctol)).map(|l| l.a.y).collect(), ctol);
+        let floor =
+            key.iter().filter(|l| same(l.a.x, l.b.x, ctol)).map(|l| l.a.x).max_by(|a, b| ((a - c.x) * gap_dir.x).total_cmp(&((b - c.x) * gap_dir.x)));
+        if let (Some(y0), Some(y1), Some(fx)) = (ys.first().copied(), ys.last().copied(), floor) {
+            if y1 - y0 > ctol {
+                let x = fx + gap_dir.x.signum() * gap;
+                p.dims.push(super::annotate::dim(
+                    s,
+                    DimKind::Linear { rotation: std::f64::consts::FRAC_PI_2 },
+                    Vec2::new(x, y0),
+                    Vec2::new(fx, y0),
+                    Vec2::new(fx, y1),
+                    Vec2::ZERO,
+                    Vec2::ZERO,
+                    "",
+                ));
+            }
+            let far = Vec2::new(c.x - gap_dir.x.signum() * bore.r, c.y);
+            let y = y1.max(c.y + bore.r) + gap;
+            p.dims.push(super::annotate::dim(
+                s,
+                DimKind::Linear { rotation: 0.0 },
+                Vec2::new(fx, y),
+                Vec2::new(fx, y1),
+                far,
+                Vec2::ZERO,
+                Vec2::ZERO,
+                "",
+            ));
+        }
+    }
 }
 
 /// The filled regions (solids, solid hatches) among `ents`: weld beads on a fabrication drawing.
@@ -865,6 +1397,19 @@ fn drop_weld_outlines(feats: &mut Vec<Feat>, welds: &[Vec<Vec2>]) {
     });
 }
 
+/// Whether the ray from `q` along `d` meets the segment `a`-`b`.
+fn ray_hits(q: Vec2, d: Vec2, a: Vec2, b: Vec2) -> bool {
+    let cr = |u: Vec2, v: Vec2| u.x * v.y - u.y * v.x;
+    let e = b - a;
+    let den = cr(d, e);
+    if den.abs() < 1e-12 {
+        return false;
+    }
+    let t = cr(a - q, e) / den;
+    let u = cr(a - q, d) / den;
+    t > 0.0 && (0.0..=1.0).contains(&u)
+}
+
 /// Distance from `q` to the segment `a`-`b`.
 fn seg_dist(q: Vec2, a: Vec2, b: Vec2) -> f64 {
     let ab = b - a;
@@ -908,7 +1453,8 @@ impl AngleFrom for Vec2 {
 /// Text height and scale of the current dimension style.
 pub(super) fn style_height(s: &Session) -> Result<f64> {
     let d = s.doc()?;
-    let st = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default();
+    // With the drawing's overrides (DIMSCALE set for this sheet), as the dimensions are drawn.
+    let st = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default().with_overrides(&d.dim_overrides());
     let k = st.effective_scale(d.header.f64("DIMSCALE", 1.0));
     let th = st.text_height * k;
     Ok(if th.is_finite() && th > 0.0 { th } else { 2.5 })
