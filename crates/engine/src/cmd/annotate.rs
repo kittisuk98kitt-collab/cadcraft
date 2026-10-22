@@ -149,7 +149,16 @@ fn auto_rotation(p1: Vec2, p2: Vec2, at: Vec2) -> f64 {
     let (y0, y1) = (p1.y.min(p2.y), p1.y.max(p2.y));
     let outside_y = at.y < y0 || at.y > y1;
     let outside_x = at.x < x0 || at.x > x1;
-    if outside_x && !outside_y { std::f64::consts::FRAC_PI_2 } else { 0.0 }
+    if outside_x && !outside_y {
+        return std::f64::consts::FRAC_PI_2;
+    }
+    if outside_y && !outside_x {
+        return 0.0;
+    }
+    // Inside both spans (or outside both): the direction the two points actually differ in,
+    // so points straight above each other give a vertical dimension, never a 0-long one.
+    let tol = 1e-9 * (1.0 + p1.len().max(p2.len()));
+    if (x1 - x0) <= tol && (y1 - y0) > tol { std::f64::consts::FRAC_PI_2 } else { 0.0 }
 }
 
 fn linear_kind(p1: Vec2, p2: Vec2, at: Vec2, rotation: Option<f64>, aligned: bool) -> DimKind {

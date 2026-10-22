@@ -732,3 +732,12 @@ fn typed_hatch_pattern_name_ends_at_a_space() {
     assert_eq!(h.pattern.to_ascii_uppercase(), "ANSI31");
     assert!((h.scale - 5.0).abs() < 1e-9);
 }
+
+#[test]
+fn dimlinear_between_points_straight_above_each_other_is_vertical() {
+    let mut s = Session::new();
+    // The dimension line placed on the points' own x (across a pipe): vertical, 88.3 long.
+    let r = s.execute("dimlinear", &json!({ "p1": [819, 44.15], "p2": [819, -44.15], "at": [819, 0] })).unwrap();
+    let dm = dim(&s, h(&r));
+    assert!(matches!(dm.kind, DimKind::Linear { rotation } if (rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-12));
+}
