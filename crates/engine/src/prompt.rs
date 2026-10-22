@@ -24,6 +24,9 @@ impl Accept {
     pub const NUMBER: Accept = Accept { point: false, number: true, text: false, select: false, enter: true };
     pub const TEXT: Accept = Accept { point: false, number: false, text: true, select: false, enter: true };
     pub const SELECT: Accept = Accept { point: true, number: false, text: false, select: true, enter: true };
+    /// A name (pattern, block, style…): text, but as AutoCAD takes it, a space ends it, so a
+    /// script line `P ANSI31 5 0` goes on to the next prompts.
+    pub const NAME: Accept = Accept { point: false, number: true, text: true, select: false, enter: true };
 }
 
 /// A prompt shown on the command line.

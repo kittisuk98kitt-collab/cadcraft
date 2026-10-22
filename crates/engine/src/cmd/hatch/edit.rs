@@ -432,7 +432,7 @@ impl Interactive for HatchEditM {
             }
             Ask::Pattern => {
                 let current = h.map(|h| h.pattern).unwrap_or_default();
-                Prompt::new("Enter a pattern name", Accept::TEXT).default(current.clone()).picker(Picker::HatchPattern(current))
+                Prompt::new("Enter a pattern name", Accept::NAME).default(current.clone()).picker(Picker::HatchPattern(current))
             }
             Ask::Scale => Prompt::new("Specify a scale for the hatch pattern", Accept::NUMBER).default(format!("{:.4}", h.map_or(1.0, |h| h.scale))),
             Ask::Angle => Prompt::new("Specify an angle for the hatch pattern", Accept::NUMBER)

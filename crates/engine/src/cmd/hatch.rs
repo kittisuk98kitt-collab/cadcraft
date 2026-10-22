@@ -649,7 +649,7 @@ impl Interactive for HatchM {
         // The sub-prompts offer the current value: Enter keeps it.
         match self.asking {
             Some(HatchAsk::Pattern) => {
-                return Prompt::new("Enter a pattern name", Accept::TEXT)
+                return Prompt::new("Enter a pattern name", Accept::NAME)
                     .default(self.settings.pattern.clone())
                     .picker(Picker::HatchPattern(self.settings.pattern.clone()));
             }

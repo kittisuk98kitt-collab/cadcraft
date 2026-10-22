@@ -702,3 +702,33 @@ fn typed_solid_makes_triangles_and_quads() {
     assert_eq!(solids[0][2], solids[0][3]);
     assert_eq!(solids[2][0].xy(), Vec2::new(10.0, 10.0));
 }
+
+#[test]
+fn dimlfac_takes_a_fraction_after_a_whole_number() {
+    let mut s = Session::new();
+    s.cmdline("DIMLFAC 1").unwrap();
+    s.cmdline("DIMLFAC 0.2").unwrap();
+    assert!((s.doc().unwrap().header.f64("DIMLFAC", 0.0) - 0.2).abs() < 1e-12);
+    // New dimensions take it: a 50 line measures 10.
+    let r = s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [50, 0], "at": [25, -10] })).unwrap();
+    let dm = dim(&s, h(&r));
+    let g = cadcraft_render::dimension_in(s.doc().unwrap(), &dm);
+    assert_eq!(g.value, "10.0000");
+}
+
+#[test]
+fn typed_hatch_pattern_name_ends_at_a_space() {
+    let mut s = Session::new();
+    s.cmdline("RECTANG 0,0 50,30").unwrap();
+    // As in an AutoCAD script: pattern, scale, angle, internal point, Enter.
+    s.script("-HATCH P ANSI31 5 0 25,15 \n").unwrap();
+    assert!(s.running.is_none());
+    let d = s.doc().unwrap();
+    let h = d.model.iter().find_map(|e| match &e.kind {
+        EntityKind::Hatch(h) => Some(h.clone()),
+        _ => None,
+    });
+    let h = h.expect("hatch made");
+    assert_eq!(h.pattern.to_ascii_uppercase(), "ANSI31");
+    assert!((h.scale - 5.0).abs() < 1e-9);
+}

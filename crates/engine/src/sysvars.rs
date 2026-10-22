@@ -347,6 +347,14 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 Value::Array(_) | Value::Object(_) => cadcraft_doc::HVal::Point(as_pt(v).ok_or_else(bad)?.to3(0.0)),
                 _ => return Err(bad()),
             };
+            // A DIM variable whose style setting is a real number (DIMLFAC, DIMSCALE, DIMTXT…)
+            // stays real, whatever was typed first: `DIMLFAC 1` then `DIMLFAC 0.2` must work.
+            if real_dimvar(&n).is_some()
+                && let Some(x) = val.as_f64()
+            {
+                d.header.set_f64(&n, x);
+                return Ok(());
+            }
             // Keep the header type stable for known numeric vars.
             match d.header.get(&n) {
                 Some(cadcraft_doc::HVal::Real(_)) => {
@@ -403,4 +411,11 @@ pub fn list(s: &Session) -> Value {
     }
     table::list(s, &mut m);
     Value::Object(m)
+}
+
+/// The dimension-style field of a DIM variable whose value is a real number.
+fn real_dimvar(name: &str) -> Option<&'static str> {
+    let (_, field) = cadcraft_doc::DIMVARS.iter().find(|(v, _)| v.eq_ignore_ascii_case(name))?;
+    let st = serde_json::to_value(cadcraft_doc::DimStyle::default()).ok()?;
+    st.get(*field).filter(|v| v.is_f64()).map(|_| *field)
 }
