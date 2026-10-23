@@ -1486,12 +1486,25 @@ fn small_rects(lines: &[&Feat], b: &Bounds2, tol: f64, ctol: f64) -> Vec<(f64, f
 /// outline mirrored about it. `(true, x)` for a vertical axis at `x`, `(false, y)` for a
 /// horizontal one.
 fn turned_axis(centre_lines: &[&Feat], edges: &[&Feat], circles: &[&Feat], b: &Bounds2, tol: f64, ctol: f64) -> Option<(bool, f64)> {
-    for vertical in [false, true] {
+    // A turned part's side view has its axis one way only: symmetric both ways about centre
+    // lines is a block or a face seen square on.
+    let h = axis_one_way(false, centre_lines, edges, circles, b, tol, ctol);
+    let v = axis_one_way(true, centre_lines, edges, circles, b, tol, ctol);
+    match (h, v) {
+        (Some(a), None) => Some((false, a)),
+        (None, Some(a)) => Some((true, a)),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn axis_one_way(vertical: bool, centre_lines: &[&Feat], edges: &[&Feat], circles: &[&Feat], b: &Bounds2, tol: f64, ctol: f64) -> Option<f64> {
+    {
         let sw = |v: Vec2| if vertical { Vec2::new(v.y, v.x) } else { v };
         let (lo, hi) = (sw(b.min), sw(b.max));
         let (len, across) = (hi.x - lo.x, hi.y - lo.y);
         if len <= 0.0 || across <= 0.0 {
-            continue;
+            return None;
         }
         // Centre lines of this direction across the part: more than one are hole marks, not an axis.
         let marks: Vec<&&Feat> = centre_lines
@@ -1505,7 +1518,7 @@ fn turned_axis(centre_lines: &[&Feat], edges: &[&Feat], circles: &[&Feat], b: &B
         // the longest line there.
         let levels = uniq(marks.iter().map(|cl| sw(cl.a).y).collect(), ctol);
         if levels.len() != 1 {
-            continue;
+            return None;
         }
         let longest = marks.iter().max_by(|p, q| (sw(p.a).x - sw(p.b).x).abs().total_cmp(&(sw(q.a).x - sw(q.b).x).abs()));
         for cl in longest.into_iter() {
@@ -1540,7 +1553,7 @@ fn turned_axis(centre_lines: &[&Feat], edges: &[&Feat], circles: &[&Feat], b: &B
                 })
                 .count();
             if mirrored * 5 >= along.len() * 4 {
-                return Some((vertical, y));
+                return Some(y);
             }
         }
     }
