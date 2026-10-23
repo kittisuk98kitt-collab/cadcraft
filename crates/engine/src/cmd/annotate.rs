@@ -735,15 +735,26 @@ fn run_update(s: &mut Session, p: &Value) -> Result<Value> {
     let st = style(s);
     let d = s.doc_mut()?;
     let mut n = 0;
+    let mut leaders = Vec::new();
+    // The current settings, overrides included (DIMSTYLE Apply).
+    let overrides = d.dim_overrides();
     for h in hs {
-        let _ = d.modify_entity(h, |e| {
-            if let EntityKind::Dimension(dm) = &mut e.kind {
+        let _ = d.modify_entity(h, |e| match &mut e.kind {
+            EntityKind::Dimension(dm) => {
                 dm.style = st.clone();
+                dm.overrides = overrides.clone();
                 dm.block = None;
                 n += 1;
             }
+            EntityKind::Leader(l) => {
+                l.style = st.clone();
+                leaders.push(h);
+                n += 1;
+            }
+            _ => {}
         });
     }
+    super::props::fit_leader_notes(d, &leaders);
     Ok(json!({ "updated": n }))
 }
 

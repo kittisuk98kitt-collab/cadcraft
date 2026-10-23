@@ -60,6 +60,10 @@ pub struct Prompt {
     /// prompt (the routine writes all of it).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub raw: bool,
+    /// A selection rectangle's corner (AUTODIM's window round the part): object snaps, grid
+    /// snap and tracking are off, the corner is where the cursor is, as a selection window's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nosnap: bool,
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -104,6 +108,11 @@ impl Prompt {
     }
     pub fn base_opt(mut self, p: Option<Vec2>) -> Self {
         self.base = p;
+        self
+    }
+    /// No object snap at this prompt (the `nosnap` field).
+    pub fn nosnap(mut self) -> Self {
+        self.nosnap = true;
         self
     }
     /// The base is a window's first corner (the `corner` field).

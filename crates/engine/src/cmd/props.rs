@@ -403,6 +403,20 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         })?;
     }
+    // A leader's dimension style: its arrow follows the style, its note is resized to the style's
+    // text height (Properties, as AutoCAD's leader does through its dimension style).
+    if let Some(st) = &dim_style {
+        let leaders: Vec<cadcraft_doc::Handle> =
+            hs.iter().copied().filter(|h| d.entity(*h).is_some_and(|e| matches!(e.kind, EntityKind::Leader(_)))).collect();
+        for h in &leaders {
+            let _ = d.modify_entity(*h, |e| {
+                if let EntityKind::Leader(l) = &mut e.kind {
+                    l.style.clone_from(st);
+                }
+            });
+        }
+        fit_leader_notes(d, &leaders);
+    }
     Ok(json!({ "changed": hs.len() }))
 }
 
@@ -720,10 +734,22 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let mut rejected = Vec::new();
+    let size = |st: &cadcraft_doc::DimStyle| st.text_height * if st.scale > 0.0 { st.scale } else { 1.0 };
+    let before = d.dim_styles.get(idx).map(size);
     if let (Some(st), Some(src)) = (d.dim_styles.get_mut(idx), p.as_object()) {
         let fields: serde_json::Map<String, Value> =
             src.iter().filter(|(k, _)| !matches!(k.as_str(), "name" | "current")).map(|(k, v)| (k.clone(), v.clone())).collect();
         rejected = st.apply_fields(&fields);
+    }
+    // The text size or scale changed: the leaders of this style follow (their arrows already do).
+    if before != d.dim_styles.get(idx).map(size) {
+        let leaders: Vec<cadcraft_doc::Handle> = std::iter::once(&d.model)
+            .chain(d.layouts.iter().map(|l| &l.entities))
+            .flat_map(|st| st.iter())
+            .filter(|e| matches!(&e.kind, EntityKind::Leader(l) if l.style.eq_ignore_ascii_case(&name)))
+            .map(|e| e.handle)
+            .collect();
+        fit_leader_notes(d, &leaders);
     }
     if bool_or(p, "current", true) {
         d.header.set_str("DIMSTYLE", &name);
@@ -1058,6 +1084,65 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad("rename", "unsupported table")),
     }
     ok()
+}
+
+/// The text a leader carries: a TEXT or MTEXT in the leader's space whose box (with a little
+/// room for the gap) holds the leader's last vertex. The nearest when several do.
+pub(crate) fn leader_note(d: &cadcraft_doc::Drawing, leader: cadcraft_doc::Handle) -> Option<cadcraft_doc::Handle> {
+    let e = d.entity(leader)?;
+    let EntityKind::Leader(l) = &e.kind else { return None };
+    let end = l.vertices.last()?.xy();
+    let space = d.space_of(leader)?;
+    let store = d.space(&space)?;
+    let mut best: Option<(f64, cadcraft_doc::Handle)> = None;
+    for t in store.iter().take(200_000) {
+        let h = match &t.kind {
+            EntityKind::Text(x) => x.height,
+            EntityKind::MText(x) => x.height,
+            _ => continue,
+        };
+        let b = cadcraft_doc::entity_bounds(d, t, 0);
+        if b.is_empty() {
+            continue;
+        }
+        let r = h.abs().max(1e-9) * 1.2;
+        let bx = b.expand(r);
+        if bx.contains(end) {
+            let dist = b.center().dist(end);
+            if best.is_none_or(|(bd, _)| dist < bd) {
+                best = Some((dist, t.handle));
+            }
+        }
+    }
+    best.map(|(_, h)| h)
+}
+
+/// Resizes the notes of `leaders` to their dimension style's text height (DIMTXT × DIMSCALE),
+/// keeping each note where it is.
+pub(crate) fn fit_leader_notes(d: &mut cadcraft_doc::Drawing, leaders: &[cadcraft_doc::Handle]) -> usize {
+    let mut n = 0;
+    for h in leaders.iter().take(100_000) {
+        let Some(style) = d.entity(*h).and_then(|e| match &e.kind {
+            EntityKind::Leader(l) => Some(l.style.clone()),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let Some(st) = d.dim_style(&style).cloned() else { continue };
+        let k = if st.scale > 0.0 && st.scale.is_finite() { st.scale } else { 1.0 };
+        let th = st.text_height * k;
+        if !(th.is_finite() && th > 0.0) {
+            continue;
+        }
+        let Some(t) = leader_note(d, *h) else { continue };
+        let _ = d.modify_entity(t, |e| match &mut e.kind {
+            EntityKind::Text(x) => x.height = th,
+            EntityKind::MText(x) => x.height = th,
+            _ => {}
+        });
+        n += 1;
+    }
+    n
 }
 
 #[cfg(test)]

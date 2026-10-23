@@ -1178,9 +1178,10 @@ fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf, ctx: &egui::Context) ->
     let base = prompt.as_ref().and_then(|p| p.base);
     let deferred = prompt.as_ref().is_some_and(|p| p.deferred);
     let corner = prompt.as_ref().is_some_and(|p| p.corner);
+    let nosnap = prompt.as_ref().is_some_and(|p| p.nosnap);
     app.canvas.snap = None;
     app.canvas.track = None;
-    if !wants_point || app.session.pending_window.is_some() {
+    if !wants_point || nosnap || app.session.pending_window.is_some() {
         if !wants_point {
             app.session.tracking.clear();
         }

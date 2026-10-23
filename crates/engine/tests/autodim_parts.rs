@@ -268,3 +268,98 @@ fn a_leader_follows_a_dimscale_set_for_the_drawing() {
         .expect("leader text");
     assert!((h - base * 7.0).abs() < 1e-6, "text height {h}, style {base}");
 }
+
+fn style_of(s: &Session, r: &Value) -> Vec<String> {
+    let d = s.doc().unwrap();
+    r["handles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|h| h.as_str().and_then(Handle::parse_hex).and_then(|h| d.entity(h)))
+        .filter_map(|e| match &e.kind {
+            EntityKind::Dimension(dm) => Some(dm.style.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn autodim_uses_the_current_style_and_spaces_rows_by_its_scale() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "S5", "scale": 5, "textHeight": 2.5, "current": false })).unwrap();
+    s.execute("dimstyle", &json!({ "name": "S2", "scale": 2, "textHeight": 2.5, "current": false })).unwrap();
+    // The sheet already has dimensions in S5 (1:5)...
+    s.execute("dimstyle.current", &json!({ "name": "S5" })).unwrap();
+    for k in 0..3 {
+        s.execute("dimlinear", &json!({ "p1": [1000 + k * 10, 0], "p2": [1005 + k * 10, 0], "at": [1000, 20] })).unwrap();
+    }
+    // ...and the user makes S2 current for a 1:2 detail.
+    s.execute("dimstyle.current", &json!({ "name": "S2" })).unwrap();
+    let hs = vec![add(&mut s, "rectang", json!({ "p1": [0, 0], "p2": [100, 50] }))];
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    assert!(style_of(&s, &r).iter().all(|n| n == "S2"), "{:?}", style_of(&s, &r));
+    assert_eq!(s.doc().unwrap().header.str("DIMSTYLE", ""), "S2");
+    // First row 3 text heights (2.5 × 2) above the part: 15, not the 1:5 37.5.
+    let ds = dims(&s, &r);
+    let top =
+        ds.iter().filter(|d| matches!(d.kind, DimKind::Linear { rotation } if rotation.abs() < 1e-9)).map(|d| d.at.y).fold(f64::INFINITY, f64::min);
+    assert!((top - 65.0).abs() < 1e-6, "first row at {top}");
+    // An asked-for style is made current with its own DIMSCALE (no stale override).
+    let hs2 = vec![add(&mut s, "rectang", json!({ "p1": [500, 0], "p2": [600, 50] }))];
+    let r2 = s.execute("autodim", &json!({ "handles": hs2, "check": false, "style": "S5" })).unwrap();
+    let d = s.doc().unwrap();
+    for h in r2["handles"].as_array().unwrap() {
+        if let Some(EntityKind::Dimension(dm)) = h.as_str().and_then(Handle::parse_hex).and_then(|h| d.entity(h)).map(|e| e.kind.clone()) {
+            assert_eq!(dm.style, "S5");
+            assert!(dm.overrides.get("scale").is_none(), "stale DIMSCALE override {:?}", dm.overrides);
+        }
+    }
+}
+
+fn note_height(s: &Session) -> f64 {
+    let d = s.doc().unwrap();
+    d.model
+        .iter()
+        .find_map(|e| match &e.kind {
+            EntityKind::MText(m) => Some(m.height),
+            EntityKind::Text(t) => Some(t.height),
+            _ => None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_leader_note_follows_its_dimension_style() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "S2", "scale": 2, "textHeight": 2.5 })).unwrap();
+    let r = s.execute("leader", &json!({ "points": [[0, 0], [20, 20], [30, 20]], "text": "C5" })).unwrap();
+    let leader = r["handles"].as_array().unwrap().iter().filter_map(|h| h.as_str()).find(|h| {
+        let d = s.doc().unwrap();
+        Handle::parse_hex(h).and_then(|h| d.entity(h)).is_some_and(|e| matches!(e.kind, EntityKind::Leader(_)))
+    });
+    let leader = leader.unwrap().to_string();
+    assert!((note_height(&s) - 5.0).abs() < 1e-9);
+    // Properties: another style resizes the note.
+    s.execute("dimstyle", &json!({ "name": "S5", "scale": 5, "textHeight": 2.5, "current": false })).unwrap();
+    s.execute("properties.set", &json!({ "handles": [leader.clone()], "dimStyle": "S5" })).unwrap();
+    assert!((note_height(&s) - 12.5).abs() < 1e-9, "{}", note_height(&s));
+    // Editing the style's scale resizes it again.
+    s.execute("dimstyle", &json!({ "name": "S5", "scale": 10, "current": false })).unwrap();
+    assert!((note_height(&s) - 25.0).abs() < 1e-9, "{}", note_height(&s));
+    // DIMSTYLE Apply with S2 current.
+    s.execute("dimstyle.current", &json!({ "name": "S2" })).unwrap();
+    s.execute("dimstyle.update", &json!({ "handles": [leader] })).unwrap();
+    assert!((note_height(&s) - 5.0).abs() < 1e-9, "{}", note_height(&s));
+}
+
+#[test]
+fn autodim_window_corners_are_not_snapped() {
+    let mut s = Session::new();
+    add(&mut s, "rectang", json!({ "p1": [0, 0], "p2": [100, 50] }));
+    s.set_selection(vec![]);
+    s.cmdline("AUTODIM").unwrap();
+    assert!(s.current_prompt().unwrap().nosnap);
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(-5.0, -5.0))).unwrap();
+    let p = s.current_prompt().unwrap();
+    assert!(p.nosnap && p.corner);
+}

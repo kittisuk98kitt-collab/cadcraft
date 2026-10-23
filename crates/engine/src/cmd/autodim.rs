@@ -1967,22 +1967,24 @@ pub(super) fn in_window(s: &Session, w: &Bounds2, among: Option<&[Handle]>) -> R
     Ok(out)
 }
 
-/// The dimension style AUTODIM uses: the one asked for, else the one the drawing's dimensions
-/// mostly use (a sheet drawn at 1:5 has its style for 1:5), else none (the current one).
+/// The dimension style AUTODIM uses: the one asked for, else the current one (the user picks
+/// the style for the view's scale; a 1:2 detail on a 1:5 sheet keeps its 1:2 style).
 fn choose_style(s: &Session, p: &Value) -> Result<Option<String>> {
     Ok(match str_param(p, "style") {
         Some(st) => Some(s.doc()?.dim_style(st).map(|d| d.name.clone()).ok_or_else(|| bad("autodim", format!("no dimension style \"{st}\"")))?),
-        None => {
-            let d = s.doc()?;
-            let mut count: BTreeMap<String, usize> = BTreeMap::new();
-            for e in d.model.iter() {
-                if let EntityKind::Dimension(dm) = &e.kind {
-                    *count.entry(dm.style.clone()).or_default() += 1;
-                }
-            }
-            count.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k).filter(|k| d.dim_style(k).is_some())
-        }
+        None => None,
     })
+}
+
+/// Makes `name` the current dimension style as DIMSTYLE Restore does: the DIM variables are set
+/// from it, so no stale override (an old DIMSCALE) carries over to what is added.
+fn make_current(s: &mut Session, name: &str) -> Result<()> {
+    let d = s.doc_mut()?;
+    if !d.header.str("DIMSTYLE", "Standard").eq_ignore_ascii_case(name) {
+        d.header.set_str("DIMSTYLE", name);
+        d.sync_dim_vars();
+    }
+    Ok(())
 }
 
 /// What AUTODIM would add for objects `hs`, in the current dimension style.
@@ -2015,7 +2017,7 @@ fn run_autodim(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("autodim", "select the part to dimension (its outline, holes and slots)"));
     }
     if let Some(name) = choose_style(s, p)? {
-        s.doc_mut()?.header.set_str("DIMSTYLE", &name);
+        make_current(s, &name)?;
     }
     let plan = plan_for(s, &hs, p)?;
     // Dimensions and notes go on the drawing's dimension layer (the company's "2-DIM") when it
@@ -2111,12 +2113,8 @@ impl AutoDimM {
         }
         Ok(())
     }
-    fn set_style(&mut self, s: &mut Session) -> Result<()> {
-        if let Some(name) = choose_style(s, &Value::Null)? {
-            let d = s.doc_mut()?;
-            self.old_style = Some(d.header.str("DIMSTYLE", "Standard"));
-            d.header.set_str("DIMSTYLE", &name);
-        }
+    fn set_style(&mut self, _s: &mut Session) -> Result<()> {
+        // The current dimension style is used as it is.
         Ok(())
     }
     fn finish(&mut self, s: &mut Session) -> Result<Step> {
@@ -2150,12 +2148,14 @@ impl Interactive for AutoDimM {
                 "Click to move the nearest corner of the rectangle, t= thickness, or Enter to place"
             };
             let accept = Accept { point: !self.preselected, number: true, text: true, select: false, enter: true };
-            let p = Prompt::new(msg, accept);
+            let p = Prompt::new(msg, accept).nosnap();
             if self.preselected { p } else { p.kw(&["Window"]) }
         } else if let Some(a) = self.first {
-            Prompt::new("Specify opposite corner", Accept::POINT).base_opt(Some(a))
+            // A selection rectangle: its corners go where the cursor is, never snapped to the
+            // part's points (which would pull a corner out past the part).
+            Prompt::new("Specify opposite corner", Accept::POINT).corner(a).nosnap()
         } else {
-            Prompt::new("Specify first corner of a rectangle round the part", Accept::POINT)
+            Prompt::new("Specify first corner of a rectangle round the part", Accept::POINT).nosnap()
         }
     }
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
