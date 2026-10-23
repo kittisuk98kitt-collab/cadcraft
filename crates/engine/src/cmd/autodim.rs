@@ -341,6 +341,9 @@ pub(super) struct Opts {
     pub thickness: Option<f64>,
     /// Text height in drawing units (style height × scale).
     pub th: f64,
+    /// A layout (a whole line of machines): only the sections along it and the overall size.
+    /// None: decided from the view (long and busy).
+    pub layout: Option<bool>,
 }
 
 /// The dimensions and notes for a part made of `feats` (outline curves, holes, slots).
@@ -361,6 +364,10 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     // Coordinates closer than this are one (drafting inaccuracy).
     let ctol = (size * 2e-4).clamp(1e-6, 0.1);
     let th = o.th.max(size * 1e-4);
+    let long = bounds.width().max(bounds.height()) >= 5.0 * bounds.width().min(bounds.height());
+    if o.layout.unwrap_or(long && outline.len() >= 150) {
+        return Ok(layout_plan(s, &outline, &bounds, tol, ctol, th));
+    }
 
     // --- circles: holes (grouped by centre) or the part itself (a disc)
     let circles: Vec<&Feat> = outline.iter().copied().filter(|f| f.kind == Kind::Circle).collect();
@@ -745,7 +752,7 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
         disc_bore_and_key(s, &mut p, c, &arcs, &edge_lines, ctol, gap0);
     }
     if let Some((vertical, at)) = axis {
-        axis_diameters(s, &mut p, &edge_lines, vertical, at, ctol, th);
+        axis_diameters(s, &mut p, &edge_lines, &outline, vertical, at, ctol, th);
     }
     // Steps of the outline that can't be seen from above (hidden under another edge: the lower
     // edge of a bent plate) are dimensioned from below, in a row of their own under the part;
@@ -1224,7 +1231,8 @@ fn turned_axis(centre_lines: &[&Feat], edges: &[&Feat], circles: &[&Feat], b: &B
 
 /// Diameters of a turned part across its axis: one per diameter, on the longest stretch at that
 /// diameter (dimension lines kept apart along the part).
-fn axis_diameters(s: &Session, p: &mut Plan, edges: &[&Feat], vertical: bool, y: f64, ctol: f64, th: f64) {
+#[allow(clippy::too_many_arguments)]
+fn axis_diameters(s: &Session, p: &mut Plan, edges: &[&Feat], all: &[&Feat], vertical: bool, y: f64, ctol: f64, th: f64) {
     let sw = |v: Vec2| if vertical { Vec2::new(v.y, v.x) } else { v };
     // (radius, from x, to x) of each stretch on one side of the axis that has a mirror.
     let along: Vec<(f64, f64, f64)> = edges
@@ -1249,9 +1257,12 @@ fn axis_diameters(s: &Session, p: &mut Plan, edges: &[&Feat], vertical: bool, y:
         let Some(x) = [0.5, 0.3, 0.7, 0.15, 0.85].iter().map(|f| x0 + (x1 - x0) * f).find(|x| {
             // Clear of the other dimensions, and not across a feature inside (a slot, a bore).
             !placed.iter().any(|q| (q - x).abs() < th * 2.5)
-                && !edges.iter().any(|l| {
-                    let (c, d) = (sw(l.a), sw(l.b));
-                    same(c.y, d.y, ctol) && (c.y - y).abs() < r - ctol && c.x.min(d.x) - th < *x && c.x.max(d.x) + th > *x
+                && !all.iter().any(|f| {
+                    // Anything drawn inside this diameter (a keyway slot, a cross hole) under it.
+                    let b = f.bounds();
+                    let (lo, hi) = (sw(b.min), sw(b.max));
+                    let (lo, hi) = (lo.min(hi), lo.max(hi));
+                    lo.y > y - r + ctol && hi.y < y + r - ctol && lo.x - th < *x && hi.x + th > *x
                 })
         }) else {
             continue;
@@ -1339,6 +1350,105 @@ fn disc_bore_and_key(s: &Session, p: &mut Plan, c: Vec2, arcs: &[&Feat], edges: 
             ));
         }
     }
+}
+
+/// A layout drawing (a line of machines, 1:100): the length of each section along the line's
+/// main beam, and the overall length, above the view. The beam is the line along the view with
+/// the most length drawn on it; the sections are the long lines on it, short pieces (under a
+/// twenty-fifth of the length) going with their neighbour.
+fn layout_plan(s: &Session, outline: &[&Feat], b: &Bounds2, tol: f64, ctol: f64, th: f64) -> Plan {
+    let mut p = Plan::default();
+    let vertical = b.height() > b.width();
+    let sw = |v: Vec2| if vertical { Vec2::new(v.y, v.x) } else { v };
+    let (lo, hi) = (sw(b.min).min(sw(b.max)), sw(b.min).max(sw(b.max)));
+    let len = hi.x - lo.x;
+    if len <= 0.0 {
+        return p;
+    }
+    let along: Vec<(f64, f64, f64)> = outline
+        .iter()
+        .filter(|f| f.kind == Kind::Line)
+        .map(|f| (sw(f.a), sw(f.b)))
+        .filter(|(a, c)| same(a.y, c.y, tol) && (a.x - c.x).abs() > tol)
+        .map(|(a, c)| (a.y, a.x.min(c.x), a.x.max(c.x)))
+        .collect();
+    // The beam: the level with the most length on it.
+    let mut best: Option<(f64, f64)> = None;
+    for (y, _, _) in along.iter().take(20_000) {
+        let total: f64 = along.iter().filter(|l| same(l.0, *y, ctol)).map(|l| l.2 - l.1).sum();
+        if best.is_none_or(|(_, t)| total > t) {
+            best = Some((*y, total));
+        }
+    }
+    let Some((beam, _)) = best else { return p };
+    // Which way the beam's body lies (its sections' ends run down from it, or up): a bar
+    // lying on the beam has its ends the other way and is no section.
+    let ends: Vec<(f64, f64)> = outline
+        .iter()
+        .filter(|f| f.kind == Kind::Line)
+        .map(|f| (sw(f.a), sw(f.b)))
+        .filter(|(a, c)| same(a.x, c.x, tol) && (a.y - c.y).abs() > tol)
+        .filter_map(|(a, c)| {
+            if same(a.y, beam, ctol) {
+                Some((a.x, c.y - beam))
+            } else if same(c.y, beam, ctol) {
+                Some((a.x, a.y - beam))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let side = |x: f64| -> f64 { ends.iter().filter(|e| same(e.0, x, ctol)).map(|e| e.1.signum()).sum::<f64>().signum() };
+    let long: Vec<&(f64, f64, f64)> = along.iter().filter(|(y, x0, x1)| same(*y, beam, ctol) && x1 - x0 >= 0.1 * len).collect();
+    let body: f64 = long.iter().map(|(_, x0, x1)| (x1 - x0) * (side(*x0) + side(*x1))).sum::<f64>().signum();
+    let mut xs: Vec<f64> = vec![lo.x, hi.x];
+    for (_, x0, x1) in long {
+        if body == 0.0 || side(*x0) == body || side(*x1) == body {
+            xs.extend([*x0, *x1]);
+        }
+    }
+    let mut xs = uniq(xs, ctol);
+    // Short pieces join their neighbour (an end plate, a guard between two sections).
+    for _ in 0..xs.len() {
+        let short = xs
+            .windows(2)
+            .enumerate()
+            .filter_map(|(i, w)| Some((i, w.get(1)? - w.first()?)))
+            .filter(|(_, d)| *d < len / 25.0)
+            .min_by(|a, c| a.1.total_cmp(&c.1));
+        let Some((i, _)) = short else { break };
+        // Drop the inner end of the short piece (never the overall ends).
+        let k = if i + 1 == xs.len() - 1 { i } else { i + 1 };
+        if k == 0 || k + 1 >= xs.len() {
+            break;
+        }
+        xs.remove(k);
+    }
+    let gap0 = th * 3.0;
+    let step = th * 2.2;
+    let (rotation, edge) = if vertical { (std::f64::consts::FRAC_PI_2, hi.y) } else { (0.0, hi.y) };
+    let mut rows: Vec<Vec<f64>> = Vec::new();
+    if xs.len() > 2 {
+        rows.push(xs);
+    }
+    rows.push(vec![lo.x, hi.x]);
+    for (k, row) in rows.iter().enumerate() {
+        let at = edge + gap0 + step * k as f64;
+        for w in row.windows(2) {
+            let (Some(a), Some(c)) = (w.first(), w.get(1)) else { continue };
+            p.dims.push(super::annotate::dim(
+                s,
+                DimKind::Linear { rotation },
+                sw(Vec2::new(*a, at)),
+                sw(Vec2::new(*a, beam)),
+                sw(Vec2::new(*c, beam)),
+                Vec2::ZERO,
+                Vec2::ZERO,
+                "",
+            ));
+        }
+    }
+    p
 }
 
 /// The filled regions (solids, solid hatches) among `ents`: weld beads on a fabrication drawing.
@@ -1525,7 +1635,8 @@ fn plan_for(s: &Session, hs: &[Handle], p: &Value) -> Result<Plan> {
     };
     let pitch_min = p.get("pitchMin").and_then(Value::as_u64).map_or(4, |v| v.clamp(3, 1000) as usize);
     let thickness = p.get("thickness").and_then(Value::as_f64);
-    let o = Opts { pitch_min, callouts: bool_or(p, "callouts", true), thickness, th };
+    let layout = p.get("layout").and_then(Value::as_bool);
+    let o = Opts { pitch_min, callouts: bool_or(p, "callouts", true), thickness, th, layout };
     plan(s, &feats, &o)
 }
 

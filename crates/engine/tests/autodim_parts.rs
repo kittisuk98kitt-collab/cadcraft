@@ -200,3 +200,50 @@ fn holes_of_two_sizes_in_one_row_take_one_chain() {
     assert!(has_span(&ds, 430.0), "65 / 430 / 430 / 65");
     assert!(!has_span(&ds, 860.0) && !has_span(&ds, 495.0), "not one row per size");
 }
+
+#[test]
+fn a_shaft_diameter_keeps_clear_of_its_keyway() {
+    let mut s = Session::new();
+    centre_layer(&mut s);
+    let mut hs = vec![add(&mut s, "rectang", json!({ "p1": [0, -70], "p2": [580, 70] }))];
+    // A 36 wide keyway from x 151 to 429 on the axis.
+    hs.push(add(&mut s, "line", json!({ "points": [[169, 18], [411, 18]] })));
+    hs.push(add(&mut s, "line", json!({ "points": [[169, -18], [411, -18]] })));
+    hs.push(add(&mut s, "arc", json!({ "center": [411, 0], "radius": 18, "start": -90, "end": 90 })));
+    hs.push(add(&mut s, "arc", json!({ "center": [169, 0], "radius": 18, "start": 90, "end": 270 })));
+    hs.push(centre_line(&mut s, [-15.0, 0.0], [595.0, 0.0]));
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false })).unwrap();
+    let ds = dims(&s, &r);
+    let d = ds.iter().find(|d| d.text.contains("%%c")).expect("a diameter");
+    assert!((d.span - 140.0).abs() < 1e-6);
+    assert!(d.at.x < 151.0 - 1.0 || d.at.x > 429.0 + 1.0, "Ø line at x {} crosses the keyway", d.at.x);
+    // The keyway is positioned by its ends: 151 / 278 / 151.
+    assert!(has_span(&ds, 151.0) && has_span(&ds, 278.0));
+}
+
+#[test]
+fn a_layout_takes_its_sections_and_overall_length_only() {
+    let mut s = Session::new();
+    let mut hs = Vec::new();
+    // A line of machines: bed sections 6440 + 6425, a 610 guard, 7490 + 5965, a 2500 drive,
+    // with 40 posts and 10 stands along it.
+    for (a, b) in [(0.0, 6440.0), (6440.0, 12865.0), (13475.0, 20965.0), (20965.0, 26930.0)] {
+        hs.push(add(&mut s, "rectang", json!({ "p1": [a, -270], "p2": [b, 270] })));
+    }
+    hs.push(add(&mut s, "rectang", json!({ "p1": [12865, -400], "p2": [13475, 400] })));
+    hs.push(add(&mut s, "rectang", json!({ "p1": [26930, -890], "p2": [29430, 700] })));
+    for k in 0..20 {
+        let x = 400.0 + 640.0 * k as f64;
+        hs.push(add(&mut s, "rectang", json!({ "p1": [x, 270], "p2": [x + 150.0, 420] })));
+        hs.push(add(&mut s, "rectang", json!({ "p1": [x, -420], "p2": [x + 150.0, -270] })));
+    }
+    for k in 0..10 {
+        let x = 14170.0 + 1255.0 * k as f64;
+        hs.push(add(&mut s, "rectang", json!({ "p1": [x - 30.0, -610], "p2": [x + 30.0, 1570] })));
+    }
+    let r = s.execute("autodim", &json!({ "handles": hs, "check": false, "callouts": false })).unwrap();
+    let ds = dims(&s, &r);
+    let mut spans: Vec<f64> = ds.iter().map(|d| (d.span * 10.0).round() / 10.0).collect();
+    spans.sort_by(f64::total_cmp);
+    assert_eq!(spans, vec![2500.0, 5965.0, 6425.0, 6440.0, 8100.0, 29430.0], "{spans:?}");
+}
