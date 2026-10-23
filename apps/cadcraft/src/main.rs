@@ -292,9 +292,7 @@ fn main() -> eframe::Result {
     }
     // Before eframe creates the wgpu instance: default Windows to DirectX 12 with FXC (see graphics.rs).
     #[cfg(target_os = "windows")]
-    let mut start_backend: Option<eframe::wgpu::Backends> = None;
-    #[cfg(target_os = "windows")]
-    {
+    let start_backend: Option<eframe::wgpu::Backends> = {
         let compiler = eframe::wgpu::Dx12Compiler::from_env().unwrap_or(eframe::wgpu::Dx12Compiler::Fxc);
         // A start that never reached its first frame left its marker: try another backend.
         let marker = config_dir().map(|d| d.join(graphics::START_MARKER));
@@ -308,9 +306,9 @@ fn main() -> eframe::Result {
             let _ = m.parent().map(std::fs::create_dir_all);
             let _ = std::fs::write(m, tried.join("\n") + "\n");
         }
-        start_backend = Some(backend);
         graphics::configure(&mut options, Some(backend), Some(compiler));
-    }
+        Some(backend)
+    };
     // Command previews (COPY, MOVE...) of large selections are tessellated by egui, whose index
     // buffer outgrew wgpu's default 256 MiB cap; the validation error is fatal. Ask for what the
     // adapter actually supports.
