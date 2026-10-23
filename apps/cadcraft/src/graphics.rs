@@ -6,39 +6,45 @@ use eframe::{
     wgpu::{Backends, Dx12Compiler},
 };
 
-/// The graphics backend for this machine: DirectX 12 when a graphics card supports it, else
-/// Vulkan, else OpenGL as the last resort (older cards and drivers on Windows 10 have no DX12
-/// device, and the window then never opened). `WGPU_BACKEND` decides when set. The probe makes a
-/// window-less instance per backend and asks it for its adapters before eframe starts: the
-/// window system can be started only once, so a failed start cannot be retried.
-#[cfg(target_os = "windows")]
-pub fn pick_backend(backend_override: Option<Backends>, compiler: Dx12Compiler) -> Backends {
-    if let Some(b) = backend_override {
-        return b;
+/// The start-up marker: the backend a start is trying, written before the window opens and
+/// removed at its first frame. One left behind means that start crashed or hung in the driver.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub const START_MARKER: &str = "graphics-start.txt";
+
+/// A backend's name in the marker (`WGPU_BACKEND` spelling).
+pub fn backend_name(b: Backends) -> &'static str {
+    if b == Backends::DX12 {
+        "dx12"
+    } else if b == Backends::VULKAN {
+        "vulkan"
+    } else if b == Backends::GL {
+        "gl"
+    } else {
+        "other"
     }
-    let available = eframe::wgpu::Instance::enabled_backend_features();
-    for b in [Backends::DX12, Backends::VULKAN] {
-        if !available.contains(b) {
-            continue;
-        }
-        let mut desc = eframe::wgpu::InstanceDescriptor::new_without_display_handle();
-        desc.backends = b;
-        desc.backend_options.dx12.shader_compiler = compiler.clone();
-        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            let instance = eframe::wgpu::Instance::new(desc);
-            pollster::block_on(instance.enumerate_adapters(b)).into_iter().map(|a| a.get_info().name).collect::<Vec<_>>()
-        }));
-        match found {
-            Ok(names) if !names.is_empty() => {
-                log::info!("Windows graphics: {b:?} adapters {names:?}");
-                return b;
-            }
-            Ok(_) => log::warn!("Windows graphics: no {b:?} adapter"),
-            Err(_) => log::warn!("Windows graphics: the {b:?} probe failed"),
+}
+
+/// The backends listed in a marker left behind (one name per line; unknown lines ignored). All
+/// three failed: start over (a driver update may have fixed one).
+pub fn failed_backends(marker: &str) -> Vec<Backends> {
+    let mut out: Vec<Backends> = Vec::new();
+    for line in marker.lines() {
+        let b = match line.trim() {
+            "dx12" => Backends::DX12,
+            "vulkan" => Backends::VULKAN,
+            "gl" => Backends::GL,
+            _ => continue,
+        };
+        if !out.contains(&b) {
+            out.push(b);
         }
     }
-    log::warn!("Windows graphics: falling back to OpenGL");
-    Backends::GL
+    if out.len() >= 3 { Vec::new() } else { out }
+}
+
+/// The next backend to try after `failed` (DirectX 12, then Vulkan, then OpenGL).
+pub fn next_backend(failed: &[Backends]) -> Option<Backends> {
+    [Backends::DX12, Backends::VULKAN, Backends::GL].into_iter().find(|b| !failed.contains(b))
 }
 
 /// Default to DirectX 12 with FXC before creating the wgpu instance. Explicit
@@ -66,6 +72,18 @@ pub fn configure(options: &mut NativeOptions, backend_override: Option<Backends>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_start_that_never_opened_moves_on_to_the_next_backend() {
+        assert!(failed_backends("").is_empty());
+        assert_eq!(failed_backends("dx12\n"), vec![Backends::DX12]);
+        assert_eq!(next_backend(&failed_backends("dx12\n")), Some(Backends::VULKAN));
+        assert_eq!(next_backend(&failed_backends("dx12\nvulkan\n")), Some(Backends::GL));
+        // Every backend failed once: start over from DirectX 12.
+        assert!(failed_backends("dx12\nvulkan\ngl\n").is_empty());
+        assert_eq!(failed_backends("junk\n gl \n"), vec![Backends::GL]);
+        assert_eq!(backend_name(Backends::VULKAN), "vulkan");
+    }
 
     fn configured_backends(backend_override: Option<Backends>) -> Backends {
         let mut options = NativeOptions::default();

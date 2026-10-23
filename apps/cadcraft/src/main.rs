@@ -37,6 +37,8 @@ struct App {
     system_animations: system_animations::SystemAnimations,
     workspace: workspace::Workspace,
     workspace_error: Option<String>,
+    /// The first frame has been shown.
+    started: bool,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
 }
@@ -89,6 +91,14 @@ impl eframe::App for App {
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if !self.started {
+            // The window opened: this backend works here.
+            self.started = true;
+            #[cfg(target_os = "windows")]
+            if let Some(m) = config_dir().map(|d| d.join(graphics::START_MARKER)) {
+                let _ = std::fs::remove_file(m);
+            }
+        }
         self.cad.ui(ui);
         self.persist_workspace(false);
     }
@@ -282,9 +292,23 @@ fn main() -> eframe::Result {
     }
     // Before eframe creates the wgpu instance: default Windows to DirectX 12 with FXC (see graphics.rs).
     #[cfg(target_os = "windows")]
+    let mut start_backend: Option<eframe::wgpu::Backends> = None;
+    #[cfg(target_os = "windows")]
     {
         let compiler = eframe::wgpu::Dx12Compiler::from_env().unwrap_or(eframe::wgpu::Dx12Compiler::Fxc);
-        let backend = graphics::pick_backend(eframe::wgpu::Backends::from_env(), compiler.clone());
+        // A start that never reached its first frame left its marker: try another backend.
+        let marker = config_dir().map(|d| d.join(graphics::START_MARKER));
+        let failed = marker.as_ref().and_then(|m| std::fs::read_to_string(m).ok()).map(|t| graphics::failed_backends(&t)).unwrap_or_default();
+        // As before the start-up probe (which kept Windows 11 machines from opening): DirectX 12,
+        // unless WGPU_BACKEND says otherwise or a start with it never opened.
+        let backend = eframe::wgpu::Backends::from_env().unwrap_or_else(|| graphics::next_backend(&failed).unwrap_or(eframe::wgpu::Backends::DX12));
+        if let Some(m) = &marker {
+            let mut tried: Vec<&str> = failed.iter().map(|b| graphics::backend_name(*b)).collect();
+            tried.push(graphics::backend_name(backend));
+            let _ = m.parent().map(std::fs::create_dir_all);
+            let _ = std::fs::write(m, tried.join("\n") + "\n");
+        }
+        start_backend = Some(backend);
         graphics::configure(&mut options, Some(backend), Some(compiler));
     }
     // Command previews (COPY, MOVE...) of large selections are tessellated by egui, whose index
@@ -375,6 +399,7 @@ fn main() -> eframe::Result {
                 spacemouse: spacemouse::SpaceMouse::start(cc.egui_ctx.clone()),
                 workspace,
                 workspace_error,
+                started: false,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
             }))
@@ -384,6 +409,24 @@ fn main() -> eframe::Result {
     // without a word: the program is a windowed one, with no console to print to.
     #[cfg(target_os = "windows")]
     if let Err(e) = &result {
+        // Start again by itself with the next backend, up to twice (the window system can be
+        // started only once per process).
+        let marker = config_dir().map(|d| d.join(graphics::START_MARKER));
+        let failed = marker.as_ref().and_then(|m| std::fs::read_to_string(m).ok()).map(|t| graphics::failed_backends(&t)).unwrap_or_default();
+        log::warn!("start with {start_backend:?} failed: {e}");
+        let restarts: u32 = std::env::var("CADCRAFT_RESTARTED").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        if restarts < 2 && (restarts > 0 || eframe::wgpu::Backends::from_env().is_none()) {
+            if let (Some(next), Ok(exe)) = (graphics::next_backend(&failed), std::env::current_exe()) {
+                let restarted = std::process::Command::new(exe)
+                    .args(std::env::args_os().skip(1))
+                    .env("CADCRAFT_RESTARTED", (restarts + 1).to_string())
+                    .env("WGPU_BACKEND", graphics::backend_name(next))
+                    .spawn();
+                if restarted.is_ok() {
+                    return Ok(());
+                }
+            }
+        }
         let log = config_dir().map(|d| d.join(logging::LOG_DIR).join(logging::LOG_FILE).display().to_string()).unwrap_or_default();
         let _ = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Error)
