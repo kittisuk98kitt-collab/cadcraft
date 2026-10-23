@@ -1332,19 +1332,20 @@ fn plan_square(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             // Past the dimension rows when it goes their way.
             let k0 = tip + d * reach;
             // Only where the rows are: beside the part for the right ones, above it for the top.
-            // (Row numbers can sit past a row's ends, outside short steps.)
-            let beside = k0.y > bounds.min.y - bottom_reach - th * 6.0 && k0.y < bounds.max.y + top_reach + th * 6.0;
-            let above = k0.x > bounds.min.x - left_reach - th * 6.0 && k0.x < bounds.max.x + right_reach + th * 6.0;
-            let need_x = if d.x > 0.0 && beside {
+            // Past the rows only where they are: the right-hand rows beside the part (the elbow
+            // at or past its right edge and level with it), likewise each side.
+            let level = k0.y > bounds.min.y - th && k0.y < bounds.max.y + th;
+            let under = k0.x > bounds.min.x - th && k0.x < bounds.max.x + th;
+            let need_x = if d.x > 0.0 && level && k0.x > bounds.max.x - th {
                 (bounds.max.x + right_reach + th - k0.x).max(0.0)
-            } else if d.x < 0.0 && beside && left_reach > 0.0 {
+            } else if d.x < 0.0 && level && left_reach > 0.0 && k0.x < bounds.min.x + th {
                 (k0.x - (bounds.min.x - left_reach - th)).max(0.0)
             } else {
                 0.0
             };
-            let need_y = if d.y > 0.0 && above {
+            let need_y = if d.y > 0.0 && under && k0.y > bounds.max.y - th {
                 (bounds.max.y + top_reach + th - k0.y).max(0.0)
-            } else if d.y < 0.0 && above && bottom_reach > 0.0 {
+            } else if d.y < 0.0 && under && bottom_reach > 0.0 && k0.y < bounds.min.y + th {
                 (k0.y - (bounds.min.y - bottom_reach - th)).max(0.0)
             } else {
                 0.0
