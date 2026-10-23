@@ -26,13 +26,14 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
             let c = b.corners();
             let mut v = vec![vec![c[0], c[1], c[2], c[3], c[0]]];
             if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::Insert(_) | EntityKind::MLeader(_)) {
-                let list = cadcraft_render::build_entities(
-                    d,
-                    std::iter::once(e),
-                    &cadcraft_render::Options { tolerance: tol, text: false, ..Default::default() },
-                );
+                // What it draws: its lines, arrowheads and the strokes of its text. Not its
+                // bounding rectangle, which takes in empty space (a crossing box beside a
+                // dimension chain, in the corner of an L-shaped block) the object does not touch.
+                let list = cadcraft_render::build_entities(d, std::iter::once(e), &cadcraft_render::Options { tolerance: tol, ..Default::default() });
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
-                v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
+                if v.is_empty() {
+                    v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
+                }
             }
             v
         }
@@ -265,8 +266,9 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
             pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| seg_hits_box(*a, *b, bx)))
         }
     });
-    // A crossing box entirely inside a text/block bounding rectangle also selects it.
-    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+    // A crossing box entirely inside a text's box also selects it (a block reference only by
+    // what it draws).
+    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_))) {
         return true;
     }
     // SOLID/TRACE are filled polygons. A crossing window wholly within the
