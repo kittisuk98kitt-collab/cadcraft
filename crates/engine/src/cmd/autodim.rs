@@ -348,6 +348,76 @@ pub(super) struct Opts {
 
 /// The dimensions and notes for a part made of `feats` (outline curves, holes, slots).
 pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
+    // A part drawn at an angle is dimensioned along its own edges: planned square to them, then
+    // turned back.
+    if let Some(t) = tilt(feats) {
+        let turned: Vec<Feat> = feats.iter().map(|f| turn_feat(f, -t)).collect();
+        let mut p = plan_square(s, &turned, o)?;
+        turn_plan(&mut p, t);
+        return Ok(p);
+    }
+    plan_square(s, feats, o)
+}
+
+fn turn(v: Vec2, t: f64) -> Vec2 {
+    let (sn, cs) = t.sin_cos();
+    Vec2::new(v.x * cs - v.y * sn, v.x * sn + v.y * cs)
+}
+
+fn turn_feat(f: &Feat, t: f64) -> Feat {
+    Feat { a: turn(f.a, t), b: turn(f.b, t), c: turn(f.c, t), ..*f }
+}
+
+fn turn_plan(p: &mut Plan, t: f64) {
+    let t3 = |v: &mut cadcraft_geom::Vec3| {
+        let q = turn(v.xy(), t);
+        v.x = q.x;
+        v.y = q.y;
+    };
+    for d in &mut p.dims {
+        if let EntityKind::Dimension(dm) = d {
+            for v in [&mut dm.defpt, &mut dm.text_mid, &mut dm.p13, &mut dm.p14, &mut dm.p15, &mut dm.p16] {
+                t3(v);
+            }
+            if let DimKind::Linear { rotation } = &mut dm.kind {
+                *rotation += t;
+            }
+        }
+    }
+    for (pts, _) in &mut p.notes {
+        for q in pts.iter_mut() {
+            *q = turn(*q, t);
+        }
+    }
+    for (q, _) in &mut p.labels {
+        *q = turn(*q, t);
+    }
+}
+
+/// The angle a part is drawn at: the direction (up to quarter turns) most of its straight
+/// outline runs in, when that is not square to the sheet. None for a part drawn square.
+fn tilt(feats: &[Feat]) -> Option<f64> {
+    let q = std::f64::consts::FRAC_PI_2;
+    let mut bins: BTreeMap<i64, f64> = BTreeMap::new();
+    let mut total = 0.0;
+    for f in feats.iter().filter(|f| !f.hidden && f.kind == Kind::Line).take(MAX_FEATS) {
+        let d = f.b - f.a;
+        let len = d.len();
+        if !(len.is_finite() && len > 0.0) {
+            continue;
+        }
+        let a = d.y.atan2(d.x).rem_euclid(q);
+        let a = if a >= q / 2.0 { a - q } else { a };
+        // Quarter-degree bins.
+        *bins.entry((a.to_degrees() * 4.0).round() as i64).or_default() += len;
+        total += len;
+    }
+    let (bin, w) = bins.into_iter().max_by(|x, y| x.1.total_cmp(&y.1))?;
+    let a = (bin as f64 / 4.0).to_radians();
+    (w >= 0.5 * total && a.abs() > 0.5_f64.to_radians()).then_some(a)
+}
+
+fn plan_square(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     // A gear or sprocket: its teeth are given by the tooth form, not dimensioned one by one.
     let reduced = without_teeth(feats);
     let feats: &[Feat] = reduced.as_deref().unwrap_or(feats);
@@ -378,6 +448,8 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     let mut disc: Option<(Vec2, f64)> = None;
     // A disc's concentric circles given as diameters.
     let mut rings: Vec<f64> = Vec::new();
+    // Bores: centre and diameters.
+    let mut bores: Vec<(Vec2, Vec<f64>)> = Vec::new();
     let mut used_arcs = vec![false; arcs.len()];
     let mut used_lines = vec![false; lines.len()];
     let mut done = vec![false; circles.len()];
@@ -411,6 +483,18 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             format!("M{} THRU", fmt_len(2.0 * a.r))
         } else if let Some(m) = (group.len() >= 2).then(|| thread_size(2.0 * rmin, 2.0 * rmax)).flatten() {
             format!("M{} THRU", fmt_len(m))
+        } else if let Some((m, big)) = (group.len() >= 3)
+            .then(|| {
+                // A tapped hole at the bottom of a counterbore: the two smallest circles are
+                // the thread, the largest the bore.
+                let mut rs: Vec<f64> = group.iter().filter_map(|j| circles.get(*j)).map(|f| f.r).collect();
+                rs.sort_by(f64::total_cmp);
+                let (a, b) = (rs.first().copied()?, rs.get(1).copied()?);
+                thread_size(2.0 * a, 2.0 * b).map(|m| (m, rmax))
+            })
+            .flatten()
+        {
+            format!("M{} {}C'BORE", fmt_len(m), fmt_len(2.0 * big))
         } else if group.len() >= 2 && !disc.is_some_and(|(dc, _)| near(dc, c.c)) {
             format!("{}DRILL {}C'BORE", fmt_len(2.0 * rmin), fmt_len(2.0 * rmax))
         } else {
@@ -432,6 +516,16 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
                 continue;
             }
             holes.push(Hole::round(c.c, rmin, format!("{}DRILL", fmt_len(2.0 * rmin))));
+            continue;
+        }
+        // A bore (a circle a good part of the part's size, and its counterbore) is given its
+        // diameters; only its centre is a position.
+        if 2.0 * rmax >= 0.45 * bounds.width().min(bounds.height()) && !label.starts_with('M') {
+            let mut rs: Vec<f64> = group.iter().filter_map(|j| circles.get(*j)).map(|f| f.r).collect();
+            rs.sort_by(f64::total_cmp);
+            rs.dedup_by(|a, b| same(*a, *b, tol.max(*a * 1e-4)));
+            bores.push((c.c, rs));
+            holes.push(Hole::round(c.c, rmax, String::new()));
             continue;
         }
         holes.push(Hole::round(c.c, rmin, label));
@@ -525,8 +619,50 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             });
         }
     }
+    // V grooves: two sloping edges meeting at a point, opening symmetrically on a straight face.
+    // A V takes its angle and its opening width; only its depth (the point) is a position.
+    // (vertex, the two ends on the face, the face is vertical)
+    let mut vees: Vec<(Vec2, Vec2, Vec2, bool)> = Vec::new();
+    let mut vee_line = vec![false; edge_lines.len()];
+    let sloping = |l: &Feat| l.kind == Kind::Line && !l.is_h(tol) && !l.is_v(tol);
+    if edge_lines.len() <= 4000 {
+        for i in 0..edge_lines.len() {
+            for j in i + 1..edge_lines.len() {
+                let (Some(l1), Some(l2)) = (edge_lines.get(i), edge_lines.get(j)) else { continue };
+                if !sloping(l1) || !sloping(l2) || vee_line.get(i).copied().unwrap_or(true) || vee_line.get(j).copied().unwrap_or(true) {
+                    continue;
+                }
+                let shared = [(l1.a, l1.b, l2.a, l2.b), (l1.a, l1.b, l2.b, l2.a), (l1.b, l1.a, l2.a, l2.b), (l1.b, l1.a, l2.b, l2.a)]
+                    .into_iter()
+                    .find(|(v1, _, v2, _)| near(*v1, *v2));
+                let Some((v, a, _, b)) = shared else { continue };
+                let on_face = |q: Vec2| edge_lines.iter().any(|f| (f.is_v(tol) || f.is_h(tol)) && (near(f.a, q) || near(f.b, q)));
+                if !on_face(a) || !on_face(b) {
+                    continue;
+                }
+                let vertical = same(a.x, b.x, ctol) && same(a.y - v.y, v.y - b.y, ctol) && !same(a.x, v.x, ctol);
+                let level = same(a.y, b.y, ctol) && same(a.x - v.x, v.x - b.x, ctol) && !same(a.y, v.y, ctol);
+                if !vertical && !level {
+                    continue;
+                }
+                vees.push((v, a, b, vertical));
+                for k in [i, j] {
+                    if let Some(f) = vee_line.get_mut(k) {
+                        *f = true;
+                    }
+                }
+            }
+        }
+    }
+    for (v, _, _, vertical) in &vees {
+        if *vertical {
+            xs_edge.push(v.x);
+        } else {
+            ys_edge.push(v.y);
+        }
+    }
     for (k, l) in edge_lines.iter().enumerate() {
-        if pad_lines.get(k).copied().unwrap_or(false) {
+        if pad_lines.get(k).copied().unwrap_or(false) || vee_line.get(k).copied().unwrap_or(false) {
             continue;
         }
         if l.is_v(tol) {
@@ -558,19 +694,42 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             fillets.push(a);
         } else {
             fillets.push(a);
-            xs_edge.push(a.c.x);
-            ys_edge.push(a.c.y);
+            // Its centre is placed like a hole's: not across a centre line it sits on in the
+            // middle of the part (the round end of a U slot).
+            let mid = bounds.center();
+            let on_cl = |v: bool| {
+                feats.iter().any(|f| {
+                    f.centre
+                        && f.kind == Kind::Line
+                        && if v { f.is_v(tol) && same(f.a.x, a.c.x, ctol) } else { f.is_h(tol) && same(f.a.y, a.c.y, ctol) }
+                })
+            };
+            if !(same(a.c.x, mid.x, ctol) && on_cl(true)) {
+                xs_edge.push(a.c.x);
+            }
+            if !(same(a.c.y, mid.y, ctol) && on_cl(false)) {
+                ys_edge.push(a.c.y);
+            }
         }
     }
     // A chamfer given by its note (C3) takes no position: the line where it starts (on a turned
     // part, the edge of its cone) is not dimensioned.
     if o.callouts {
         let mid = bounds.center();
+        let chamfer_end = |q: Vec2| chamfers.iter().any(|(a, b, _)| near(*a, q) || near(*b, q));
+        // A face there (a line with an end that is no chamfer's) keeps its position; only a
+        // cone edge running from chamfer to chamfer is left out.
+        let face_x = |x: f64| edge_lines.iter().any(|l| l.is_v(tol) && same(l.a.x, x, ctol) && !(chamfer_end(l.a) && chamfer_end(l.b)));
+        let face_y = |y: f64| edge_lines.iter().any(|l| l.is_h(tol) && same(l.a.y, y, ctol) && !(chamfer_end(l.a) && chamfer_end(l.b)));
         for (a, b, _) in &chamfers {
             let ix = if (a.x - mid.x).abs() < (b.x - mid.x).abs() { a.x } else { b.x };
             let iy = if (a.y - mid.y).abs() < (b.y - mid.y).abs() { a.y } else { b.y };
-            xs_edge.retain(|x| !same(*x, ix, ctol));
-            ys_edge.retain(|y| !same(*y, iy, ctol));
+            if !face_x(ix) {
+                xs_edge.retain(|x| !same(*x, ix, ctol));
+            }
+            if !face_y(iy) {
+                ys_edge.retain(|y| !same(*y, iy, ctol));
+            }
         }
     }
     xs_edge.extend([bounds.min.x, bounds.max.x]);
@@ -616,10 +775,27 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     }
     pos_holes.extend(marks.iter());
     pos_holes.extend(repeats.iter());
-    let xs_hole =
-        uniq(pos_holes.iter().filter(|h| !(axis.is_some_and(|a| a.0) && on_axis(h, h.tip_c))).flat_map(|h| h.px.iter().map(|c| c.x)).collect(), ctol);
+    // A hole in the middle of the part on its centre line is placed by the symmetry the
+    // centre line shows: no position across it.
+    let mid = bounds.center();
+    let sym_x = |x: f64| disc.is_none() && same(x, mid.x, ctol) && centre_lines.iter().any(|f| f.is_v(tol) && same(f.a.x, x, ctol));
+    let sym_y = |y: f64| disc.is_none() && same(y, mid.y, ctol) && centre_lines.iter().any(|f| f.is_h(tol) && same(f.a.y, y, ctol));
+    let xs_hole = uniq(
+        pos_holes
+            .iter()
+            .filter(|h| !(axis.is_some_and(|a| a.0) && on_axis(h, h.tip_c)))
+            .flat_map(|h| h.px.iter().map(|c| c.x))
+            .filter(|x| !sym_x(*x))
+            .collect(),
+        ctol,
+    );
     let ys_hole = uniq(
-        pos_holes.iter().filter(|h| !(axis.is_some_and(|a| !a.0) && on_axis(h, h.tip_c))).flat_map(|h| h.py.iter().map(|c| c.y)).collect(),
+        pos_holes
+            .iter()
+            .filter(|h| !(axis.is_some_and(|a| !a.0) && on_axis(h, h.tip_c)))
+            .flat_map(|h| h.py.iter().map(|c| c.y))
+            .filter(|y| !sym_y(*y))
+            .collect(),
         ctol,
     );
 
@@ -680,10 +856,10 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
         let e = by_label.entry(h.label.clone()).or_default();
         // On a turned part's axis a hole has no position across it.
         if !(axis.is_some_and(|a| a.0) && on_axis(h, h.tip_c)) {
-            e.0.extend(h.px.iter().map(|c| c.x));
+            e.0.extend(h.px.iter().map(|c| c.x).filter(|x| !sym_x(*x)));
         }
         if !(axis.is_some_and(|a| !a.0) && on_axis(h, h.tip_c)) {
-            e.1.extend(h.py.iter().map(|c| c.y));
+            e.1.extend(h.py.iter().map(|c| c.y).filter(|y| !sym_y(*y)));
         }
     }
     // (positions along the axis, positions across it) per kind of hole.
@@ -748,6 +924,14 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             p.dims.push(super::annotate::dim(s, DimKind::Diameter, c * 2.0 - at, Vec2::ZERO, Vec2::ZERO, at, Vec2::ZERO, ""));
         }
     }
+    for (c, rs) in &bores {
+        for (i, r) in rs.iter().rev().enumerate().take(8) {
+            // Up-right, then down-left (a counterbore's two), then the other diagonal.
+            let ang = std::f64::consts::FRAC_PI_4 + std::f64::consts::PI * (i % 2) as f64 + std::f64::consts::FRAC_PI_2 * (i / 2) as f64;
+            let at = *c + Vec2::from_angle(ang) * *r;
+            p.dims.push(super::annotate::dim(s, DimKind::Diameter, *c * 2.0 - at, Vec2::ZERO, Vec2::ZERO, at, Vec2::ZERO, ""));
+        }
+    }
     if let Some((c, _)) = disc {
         disc_bore_and_key(s, &mut p, c, &arcs, &edge_lines, ctol, gap0);
     }
@@ -776,13 +960,19 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
         let key = |q: &Vec2| if vertical { q.y } else { q.x };
         if most { on.max_by(|a, b| key(a).total_cmp(&key(b))) } else { on.min_by(|a, b| key(a).total_cmp(&key(b))) }
     };
-    let hidden_side = |vals: &[f64], vertical: bool, lo: f64, hi: f64| -> Vec<f64> {
+    let low_point = |v: f64, vertical: bool| -> bool {
         let (out, back) = if vertical { (Vec2::new(0.0, 1.0), Vec2::new(0.0, -1.0)) } else { (Vec2::new(1.0, 0.0), Vec2::new(-1.0, 0.0)) };
-        vals.iter()
-            .copied()
-            .filter(|v| !same(*v, lo, ctol) && !same(*v, hi, ctol))
-            .filter(|v| extreme(*v, vertical, true).is_some_and(|t| !clear(t, out)) && extreme(*v, vertical, false).is_some_and(|b| clear(b, back)))
-            .collect()
+        let (Some(t), Some(b)) = (extreme(v, vertical, true), extreme(v, vertical, false)) else { return false };
+        if !clear(b, back) {
+            return false;
+        }
+        // Hidden from the far side, or much nearer this one (the foot of a tall part: a short
+        // extension line from below, not a long one from above).
+        let (far, near) = if vertical { (bounds.max.y - t.y, b.y - bounds.min.y) } else { (bounds.max.x - t.x, b.x - bounds.min.x) };
+        !clear(t, out) || far > 2.0 * near + th * 4.0
+    };
+    let hidden_side = |vals: &[f64], vertical: bool, lo: f64, hi: f64| -> Vec<f64> {
+        vals.iter().copied().filter(|v| !same(*v, lo, ctol) && !same(*v, hi, ctol)).filter(|v| low_point(*v, vertical)).collect()
     };
     // Along a turned part's axis only its faces are dimensioned, not where a taper turns
     // (a sprocket's tooth flanks).
@@ -808,18 +998,61 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     let ys_left = if y_edge_rows { hidden_side(&ys_edge, false, bounds.min.y, bounds.max.y) } else { Vec::new() };
     let xs_top: Vec<f64> = xs_edge.iter().copied().filter(|x| !xs_low.iter().any(|l| same(*l, *x, ctol))).collect();
     let ys_right: Vec<f64> = ys_edge.iter().copied().filter(|y| !ys_left.iter().any(|l| same(*l, *y, ctol))).collect();
-    let x_rows = if !x_edge_rows {
+    // A disc's holes are placed from its centre or from each other, never from the rim.
+    let disc_row = |v: &[f64], c: f64| -> Vec<Vec<f64>> {
+        let row = if v.len() >= 2 {
+            v.to_vec()
+        } else if v.first().is_some_and(|x| !same(*x, c, ctol)) {
+            uniq(v.iter().copied().chain([c]).collect(), ctol)
+        } else {
+            Vec::new()
+        };
+        if row.len() >= 2 { vec![row] } else { Vec::new() }
+    };
+    // Both ends of the part at its foot (a base plate under an upright): the row above spans
+    // the upright only, and the overall size goes below with the foot's steps.
+    let top_inner: Vec<f64> = xs_top.iter().copied().filter(|x| !same(*x, bounds.min.x, ctol) && !same(*x, bounds.max.x, ctol)).collect();
+    let foot = x_edge_rows
+        && top_inner.len() >= 2
+        && low_point(bounds.min.x, true)
+        && low_point(bounds.max.x, true)
+        && xs_hole.iter().all(|x| top_inner.first().is_some_and(|a| *x >= *a - ctol) && top_inner.last().is_some_and(|b| *x <= *b + ctol));
+    let x_rows = if let Some((c, _)) = disc {
+        disc_row(&xs_hole, c.x)
+    } else if !x_edge_rows {
         rows(&xs_hole, &gx, &[], bounds.min.x, bounds.max.x).into_iter().filter(|r| r.len() > 2).collect()
+    } else if foot {
+        let (a, b) = (top_inner.first().copied().unwrap_or(bounds.min.x), top_inner.last().copied().unwrap_or(bounds.max.x));
+        rows(&xs_hole, &gx, &top_inner, a, b)
     } else {
         rows(&xs_hole, &gx, &xs_top, bounds.min.x, bounds.max.x)
     };
-    let y_rows = if !y_edge_rows {
+    let y_rows = if let Some((c, _)) = disc {
+        disc_row(&ys_hole, c.y)
+    } else if !y_edge_rows {
         rows(&ys_hole, &gy, &[], bounds.min.y, bounds.max.y).into_iter().filter(|r| r.len() > 2).collect()
     } else {
         rows(&ys_hole, &gy, &ys_right, bounds.min.y, bounds.max.y)
     };
-    let low_rows: Vec<Vec<f64>> =
+    // A V's opening width, nearest the part on the side its face is on.
+    let (mut x_rows, mut y_rows) = (x_rows, y_rows);
+    for (_, a, b, vertical) in &vees {
+        if *vertical {
+            y_rows.insert(0, vec![a.y.min(b.y), a.y.max(b.y)]);
+        } else {
+            x_rows.insert(0, vec![a.x.min(b.x), a.x.max(b.x)]);
+        }
+    }
+    for (v, a, b, _) in &vees {
+        let bis = ((*a - *v).normalized() + (*b - *v).normalized()).normalized();
+        let at = *v + bis * (a.dist(*v) * 0.6);
+        p.dims.push(super::annotate::dim(s, DimKind::Angular3P, at, *a, *b, *v, Vec2::ZERO, ""));
+    }
+    let mut low_rows: Vec<Vec<f64>> =
         if xs_low.is_empty() { Vec::new() } else { vec![uniq(xs_low.iter().copied().chain([bounds.min.x, bounds.max.x]).collect(), ctol)] };
+    if foot {
+        low_rows.push(vec![bounds.min.x, bounds.max.x]);
+    }
     let left_rows: Vec<Vec<f64>> =
         if ys_left.is_empty() { Vec::new() } else { vec![uniq(ys_left.iter().copied().chain([bounds.min.y, bounds.max.y]).collect(), ctol)] };
     // Each row from the part outwards; a step too short for its text alternates with its
@@ -846,15 +1079,68 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
     let left_place = place(&left_rows);
     let bottom_reach = if low_place.is_empty() { 0.0 } else { gap0 + step * levels(&low_place) as f64 };
     let left_reach = if left_place.is_empty() { 0.0 } else { gap0 + step * levels(&left_place) as f64 };
-    for (k, a, b, text) in low_place {
+    // A step too short for its number has it outside, past one extension line: the outer one
+    // at a row's ends, the roomier side in between, so it doesn't land on its neighbour's.
+    // 0: the style's place; 1: past the first extension line; 2: lifted clear of the row over
+    // its own dimension line (no room either side).
+    let first_side = |v: &[(usize, f64, f64, String)]| -> Vec<u8> {
+        let shown = |a: f64, b: f64, t: &str| if t.is_empty() { fmt_len(b - a) } else { t.replace("<>", &fmt_len(b - a)) };
+        let width = |a: f64, b: f64, t: &str| th * 0.8 * shown(a, b, t).chars().count() as f64;
+        let need = |a: f64, b: f64, t: &str| width(a, b, t) + th * 2.4;
+        (0..v.len())
+            .map(|i| {
+                let Some((k, a, b, t)) = v.get(i) else { return 0 };
+                if b - a >= need(*a, *b, t) {
+                    return 0;
+                }
+                let prev = i.checked_sub(1).and_then(|j| v.get(j)).filter(|q| q.0 == *k);
+                let next = v.get(i + 1).filter(|q| q.0 == *k);
+                match (prev, next) {
+                    (None, _) => 1,
+                    (Some(_), None) => 0,
+                    (Some(pq), Some(nq)) => {
+                        // Room beside a neighbour's own centred number.
+                        let room = |q: &(usize, f64, f64, String)| ((q.2 - q.1) - width(q.1, q.2, &q.3)) / 2.0 - th * 1.5;
+                        let own = width(*a, *b, t);
+                        if room(pq) >= own && room(pq) >= room(nq) {
+                            1
+                        } else if room(nq) >= own {
+                            0
+                        } else {
+                            2
+                        }
+                    }
+                }
+            })
+            .collect()
+    };
+    let lift = |e: &mut EntityKind, at: Vec2| {
+        if let EntityKind::Dimension(dm) = e {
+            dm.text_mid = cadcraft_geom::Vec3::new(at.x, at.y, 0.0);
+            dm.user_text_pos = true;
+        }
+    };
+    let text_first = |e: &mut EntityKind, at: Vec2| {
+        if let EntityKind::Dimension(dm) = e {
+            dm.text_mid = cadcraft_geom::Vec3::new(at.x, at.y, 0.0);
+        }
+    };
+    let (sx, sy, sl, sf) = (first_side(&x_place), first_side(&y_place), first_side(&low_place), first_side(&left_place));
+    for (i, (k, a, b, text)) in low_place.into_iter().enumerate() {
         let y = bounds.min.y - gap0 - step * k as f64;
         let o_low = |x: f64| extreme(x, true, false).unwrap_or(Vec2::new(x, bounds.min.y));
-        p.dims.push(super::annotate::dim(s, DimKind::Linear { rotation: 0.0 }, Vec2::new(a, y), o_low(a), o_low(b), Vec2::ZERO, Vec2::ZERO, &text));
+        let mut e = super::annotate::dim(s, DimKind::Linear { rotation: 0.0 }, Vec2::new(a, y), o_low(a), o_low(b), Vec2::ZERO, Vec2::ZERO, &text);
+        match sl.get(i).copied().unwrap_or(0) {
+            1 => text_first(&mut e, Vec2::new(a - th * 3.0, y)),
+            2 => lift(&mut e, Vec2::new((a + b) / 2.0, y - th * 1.4)),
+            _ => {}
+        }
+        p.dims.push(e);
     }
-    for (k, a, b, text) in left_place {
+    for (i, (k, a, b, text)) in left_place.into_iter().enumerate() {
         let x = bounds.min.x - gap0 - step * k as f64;
         let o_left = |y: f64| extreme(y, false, false).unwrap_or(Vec2::new(bounds.min.x, y));
-        p.dims.push(super::annotate::dim(
+        let mut e = super::annotate::dim(
             s,
             DimKind::Linear { rotation: std::f64::consts::FRAC_PI_2 },
             Vec2::new(x, a),
@@ -863,24 +1149,28 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             Vec2::ZERO,
             Vec2::ZERO,
             &text,
-        ));
+        );
+        match sf.get(i).copied().unwrap_or(0) {
+            1 => text_first(&mut e, Vec2::new(x, a - th * 3.0)),
+            2 => lift(&mut e, Vec2::new(x - th * 1.4, (a + b) / 2.0)),
+            _ => {}
+        }
+        p.dims.push(e);
     }
-    for (k, a, b, text) in x_place {
+    for (i, (k, a, b, text)) in x_place.into_iter().enumerate() {
         let y = bounds.max.y + gap0 + step * k as f64;
-        p.dims.push(super::annotate::dim(
-            s,
-            DimKind::Linear { rotation: 0.0 },
-            Vec2::new(a, y),
-            origin_x(a),
-            origin_x(b),
-            Vec2::ZERO,
-            Vec2::ZERO,
-            &text,
-        ));
+        let mut e =
+            super::annotate::dim(s, DimKind::Linear { rotation: 0.0 }, Vec2::new(a, y), origin_x(a), origin_x(b), Vec2::ZERO, Vec2::ZERO, &text);
+        match sx.get(i).copied().unwrap_or(0) {
+            1 => text_first(&mut e, Vec2::new(a - th * 3.0, y)),
+            2 => lift(&mut e, Vec2::new((a + b) / 2.0, y + th * 1.4)),
+            _ => {}
+        }
+        p.dims.push(e);
     }
-    for (k, a, b, text) in y_place {
+    for (i, (k, a, b, text)) in y_place.into_iter().enumerate() {
         let x = bounds.max.x + gap0 + step * k as f64;
-        p.dims.push(super::annotate::dim(
+        let mut e = super::annotate::dim(
             s,
             DimKind::Linear { rotation: std::f64::consts::FRAC_PI_2 },
             Vec2::new(x, a),
@@ -889,7 +1179,13 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             Vec2::ZERO,
             Vec2::ZERO,
             &text,
-        ));
+        );
+        match sy.get(i).copied().unwrap_or(0) {
+            1 => text_first(&mut e, Vec2::new(x, a - th * 3.0)),
+            2 => lift(&mut e, Vec2::new(x + th * 1.4, (a + b) / 2.0)),
+            _ => {}
+        }
+        p.dims.push(e);
     }
 
     // --- callouts below and to the left of the part
@@ -916,6 +1212,9 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
         // (text, candidates: tip, direction index, distance out to the part's edge)
         let mut wanted: Vec<(String, Vec<(Vec2, usize, f64)>)> = Vec::new();
         for (label, hs) in &groups {
+            if label.is_empty() {
+                continue;
+            }
             let count: usize = hs.len();
             let text = if count > 1 { format!("{count}-{label}") } else { label.clone() };
             let mut c = Vec::new();
@@ -986,7 +1285,18 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             }
             seen_c.push(*leg);
             let all: Vec<&(Vec2, Vec2, f64)> = chamfers.iter().filter(|(_, _, l)| same(*l, *leg, tol.max(leg * 1e-4))).collect();
-            let n = all.len();
+            // On a turned part each chamfer is drawn twice, mirrored about the axis.
+            let n = match axis {
+                Some((v, at)) => all
+                    .iter()
+                    .filter(|(a, b, _)| {
+                        let m = (*a + *b) * 0.5;
+                        if v { m.x > at } else { m.y > at }
+                    })
+                    .count()
+                    .max(1),
+                None => all.len(),
+            };
             let text = if n > 1 { format!("{n}-C{}", fmt_len(*leg)) } else { format!("C{}", fmt_len(*leg)) };
             let mut c = Vec::new();
             for (a, b, _) in &all {
@@ -1022,8 +1332,9 @@ pub(super) fn plan(s: &Session, feats: &[Feat], o: &Opts) -> Result<Plan> {
             // Past the dimension rows when it goes their way.
             let k0 = tip + d * reach;
             // Only where the rows are: beside the part for the right ones, above it for the top.
-            let beside = k0.y > bounds.min.y - bottom_reach - th && k0.y < bounds.max.y + top_reach;
-            let above = k0.x > bounds.min.x - left_reach - th && k0.x < bounds.max.x + right_reach;
+            // (Row numbers can sit past a row's ends, outside short steps.)
+            let beside = k0.y > bounds.min.y - bottom_reach - th * 6.0 && k0.y < bounds.max.y + top_reach + th * 6.0;
+            let above = k0.x > bounds.min.x - left_reach - th * 6.0 && k0.x < bounds.max.x + right_reach + th * 6.0;
             let need_x = if d.x > 0.0 && beside {
                 (bounds.max.x + right_reach + th - k0.x).max(0.0)
             } else if d.x < 0.0 && beside && left_reach > 0.0 {
@@ -1189,13 +1500,19 @@ fn turned_axis(centre_lines: &[&Feat], edges: &[&Feat], circles: &[&Feat], b: &B
                 same(a.y, e.y, tol) && a.y > lo.y && a.y < hi.y
             })
             .collect();
-        if marks.len() != 1 {
+        // One position across the part (a hole's short centre line may lie on the axis too):
+        // the longest line there.
+        let levels = uniq(marks.iter().map(|cl| sw(cl.a).y).collect(), ctol);
+        if levels.len() != 1 {
             continue;
         }
-        for cl in marks {
+        let longest = marks.iter().max_by(|p, q| (sw(p.a).x - sw(p.b).x).abs().total_cmp(&(sw(q.a).x - sw(q.b).x).abs()));
+        for cl in longest.into_iter() {
             let (a, e) = (sw(cl.a), sw(cl.b));
-            // A hole's centre line runs through its circle.
-            if circles.iter().any(|c| same(sw(c.c).y, a.y, ctol) && sw(c.c).x > lo.x && sw(c.c).x < hi.x) {
+            // A hole's centre line runs through its circle (just past it); an axis runs on
+            // along the part, and may have a cross hole on it.
+            let on_line: Vec<&&Feat> = circles.iter().filter(|c| same(sw(c.c).y, a.y, ctol) && sw(c.c).x > lo.x && sw(c.c).x < hi.x).collect();
+            if on_line.iter().any(|c| (a.x - e.x).abs() < 5.0 * c.r) || uniq(on_line.iter().map(|c| sw(c.c).x).collect(), ctol).len() >= 2 {
                 continue;
             }
             if !same(a.y, e.y, tol) || (a.x - e.x).abs() < 0.6 * len || a.y <= lo.y || a.y >= hi.y {
@@ -1249,6 +1566,10 @@ fn axis_diameters(s: &Session, p: &mut Plan, edges: &[&Feat], all: &[&Feat], ver
         .collect();
     let radii = uniq(along.iter().map(|a| a.0).collect(), ctol);
     let mut placed: Vec<f64> = Vec::new();
+    let xs_all: Vec<f64> = edges.iter().flat_map(|l| [sw(l.a).x, sw(l.b).x]).collect();
+    let xmin = xs_all.iter().copied().fold(f64::INFINITY, f64::min);
+    let xmax = xs_all.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let (mut out_left, mut out_right) = (0usize, 0usize);
     // Largest first: the outside diameters take the middle of their stretch.
     for r in radii.iter().rev().take(64) {
         let Some((_, x0, x1)) = along.iter().filter(|a| same(a.0, *r, ctol)).copied().max_by(|a, b| (a.2 - a.1).total_cmp(&(b.2 - b.1))) else {
@@ -1259,12 +1580,33 @@ fn axis_diameters(s: &Session, p: &mut Plan, edges: &[&Feat], all: &[&Feat], ver
             !placed.iter().any(|q| (q - x).abs() < th * 2.5)
                 && !all.iter().any(|f| {
                     // Anything drawn inside this diameter (a keyway slot, a cross hole) under it.
+                    // The part's own steps are no obstacle: lines along the axis at one of its
+                    // diameters, and faces across it (the dimension line runs beside them).
+                    let (a, c) = (sw(f.a), sw(f.b));
+                    if f.kind == Kind::Line {
+                        if same(a.y, c.y, ctol) && radii.iter().any(|q| same((a.y - y).abs(), *q, ctol)) {
+                            return false;
+                        }
+                        if same(a.x, c.x, ctol) {
+                            return a.y.min(c.y) > y - r + ctol && a.y.max(c.y) < y + r - ctol && (a.x - *x).abs() <= ctol;
+                        }
+                    }
                     let b = f.bounds();
                     let (lo, hi) = (sw(b.min), sw(b.max));
                     let (lo, hi) = (lo.min(hi), lo.max(hi));
                     lo.y > y - r + ctol && hi.y < y + r - ctol && lo.x - th < *x && hi.x + th > *x
                 })
         }) else {
+            // No room on the part (a short hub beside a flange): beside the part's end nearest
+            // the stretch, one row out per diameter put there.
+            let right = (xmax - x1) <= (x0 - xmin);
+            let n = if right { &mut out_right } else { &mut out_left };
+            let xd = if right { xmax + th * (3.0 + 2.2 * *n as f64) } else { xmin - th * (3.0 + 2.2 * *n as f64) };
+            *n += 1;
+            let xe = if right { x1 } else { x0 };
+            let (top, bot) = (sw(Vec2::new(xe, y + r)), sw(Vec2::new(xe, y - r)));
+            let rotation = if vertical { 0.0 } else { std::f64::consts::FRAC_PI_2 };
+            p.dims.push(super::annotate::dim(s, DimKind::Linear { rotation }, sw(Vec2::new(xd, y + r)), top, bot, Vec2::ZERO, Vec2::ZERO, "%%c<>"));
             continue;
         };
         placed.push(x);
@@ -1531,7 +1873,7 @@ fn seg_dist(q: Vec2, a: Vec2, b: Vec2) -> f64 {
 /// A metric thread drawn as its tap drill circle inside its nominal circle: the nominal size
 /// when `inner` is the tap drill (nominal less the coarse pitch) of `outer`.
 fn thread_size(inner: f64, outer: f64) -> Option<f64> {
-    const COARSE: [(f64, f64); 14] = [
+    const COARSE: [(f64, f64); 21] = [
         (2.0, 0.4),
         (2.5, 0.45),
         (3.0, 0.5),
@@ -1546,8 +1888,15 @@ fn thread_size(inner: f64, outer: f64) -> Option<f64> {
         (20.0, 2.5),
         (24.0, 3.0),
         (30.0, 3.5),
+        (36.0, 4.0),
+        (42.0, 4.5),
+        (48.0, 5.0),
+        (56.0, 5.5),
+        (64.0, 6.0),
+        (72.0, 6.0),
+        (80.0, 6.0),
     ];
-    COARSE.iter().find(|(d, pch)| (outer - d).abs() < 0.05 && (inner - (d - pch)).abs() < 0.3).map(|(d, _)| *d)
+    COARSE.iter().find(|(d, pch)| (outer - d).abs() < 0.05 && (inner - (d - pch)).abs() < (0.012 * d).max(0.3)).map(|(d, _)| *d)
 }
 
 /// The angle of `p` seen from `c`.

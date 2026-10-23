@@ -631,7 +631,11 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     let st = style(s);
     // Everything the current dimension style gives a leader: arrow size, text height and gap
     // (times DIMSCALE), text style and colour.
-    let ds = s.doc()?.dim_style(&st).cloned().unwrap_or_default();
+    // With the drawing's overrides (DIMSCALE set at the command line), as dimensions are drawn.
+    let ds = {
+        let d = s.doc()?;
+        d.dim_style(&st).cloned().unwrap_or_default().with_overrides(&d.dim_overrides())
+    };
     let k = if ds.scale > 0.0 { ds.scale } else { 1.0 };
     // Lines of text: "\P" or new lines separate them.
     let lines: Vec<String> = match p.get("text") {

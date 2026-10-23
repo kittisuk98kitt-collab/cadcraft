@@ -247,3 +247,24 @@ fn a_layout_takes_its_sections_and_overall_length_only() {
     spans.sort_by(f64::total_cmp);
     assert_eq!(spans, vec![2500.0, 5965.0, 6425.0, 6440.0, 8100.0, 29430.0], "{spans:?}");
 }
+
+#[test]
+fn a_leader_follows_a_dimscale_set_for_the_drawing() {
+    let mut s = Session::new();
+    let st = s.doc().unwrap().header.str("DIMSTYLE", "Standard");
+    let base = s.doc().unwrap().dim_style(&st).map(|d| d.text_height).unwrap();
+    s.cmdline("DIMSCALE 7").unwrap();
+    let r = s.execute("leader", &json!({ "points": [[0, 0], [10, 10]], "text": "C5" })).unwrap();
+    let d = s.doc().unwrap();
+    let hs: Vec<String> = r["handles"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    let h = hs
+        .iter()
+        .filter_map(|h| Handle::parse_hex(h).and_then(|h| d.entity(h)))
+        .find_map(|e| match &e.kind {
+            EntityKind::MText(m) => Some(m.height),
+            EntityKind::Text(t) => Some(t.height),
+            _ => None,
+        })
+        .expect("leader text");
+    assert!((h - base * 7.0).abs() < 1e-6, "text height {h}, style {base}");
+}
